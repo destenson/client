@@ -228,6 +228,9 @@ export const kbfsCommon = {
     'rekeying': 4,
     'connection': 5,
     'mdReadSuccess': 6,
+    'fileCreated': 7,
+    'fileModified': 8,
+    'fileDeleted': 9,
   },
   'FSErrorType': {
     'accessDenied': 0,
@@ -267,6 +270,8 @@ export const notifyCtl = {}
 export const NotifyFavorites = {}
 
 export const NotifyFS = {}
+
+export const NotifyFSRequest = {}
 
 export const NotifyKeyfamily = {}
 
@@ -497,6 +502,7 @@ export default {
   notifyCtl,
   NotifyFavorites,
   NotifyFS,
+  NotifyFSRequest,
   NotifyKeyfamily,
   NotifyPaperKey,
   NotifyService,
