@@ -1,6 +1,7 @@
 // @flow
 import type {ConfigState} from '../reducers/config'
 import type {FavoriteState} from '../constants/favorite'
+import type {State as ProfileState} from '../constants/profile'
 import type {State as SearchState} from '../reducers/search'
 import type {State as TotalTrackerState} from '../reducers/tracker'
 import type {State as UnlockFoldersState} from '../reducers/unlock-folders'
@@ -11,7 +12,7 @@ export type TypedState = {
   config: ConfigState,
   tracker: TotalTrackerState,
   favorite: FavoriteState,
-
+  profile: ProfileState,
 }
 
 // TODO swap State with TypedState when TypedState includes everything we care about
