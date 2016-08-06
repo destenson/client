@@ -204,6 +204,7 @@ func (d *Service) Run() (err error) {
 	d.checkTrackingEveryHour()
 	d.checkRevokedPeriodic()
 	d.startupGregor()
+	d.addGlobalHooks()
 	d.configurePath()
 
 	d.G().ExitCode, err = d.ListenLoopWithStopper(l)
@@ -241,9 +242,12 @@ func (d *Service) startupGregor() {
 		if gcErr := d.tryGregordConnect(); gcErr != nil {
 			g.Log.Debug("error connecting to gregord: %s", gcErr)
 		}
-		g.AddLoginHook(d)
-		g.AddLogoutHook(d)
 	}
+}
+
+func (d *Service) addGlobalHooks() {
+	d.G().AddLoginHook(d)
+	d.G().AddLogoutHook(d)
 }
 
 func (d *Service) StartLoopbackServer() error {
@@ -330,6 +334,7 @@ func (d *Service) tryGregordConnect() error {
 }
 
 func (d *Service) OnLogin() error {
+	d.rekeyMaster.Login()
 	return d.gregordConnect()
 }
 
@@ -338,6 +343,7 @@ func (d *Service) OnLogout() error {
 		return nil
 	}
 	d.gregor.Shutdown()
+	d.rekeyMaster.Logout()
 	return nil
 }
 
