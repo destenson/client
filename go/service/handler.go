@@ -150,9 +150,10 @@ func (u *UpdateUI) UpdateQuit(ctx context.Context, arg keybase1.UpdateQuitArg) (
 }
 
 type RekeyUI struct {
-	sessionID int
-	cli       *keybase1.RekeyUIClient
 	libkb.Contextified
+	sessionID    int
+	cli          *keybase1.RekeyUIClient
+	connectionID libkb.ConnectionID
 }
 
 // DelegateRekeyUI shouldn't be called on this object since it

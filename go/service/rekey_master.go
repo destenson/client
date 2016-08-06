@@ -16,6 +16,8 @@ import (
 type rekeyMaster struct {
 	libkb.Contextified
 	interruptCh chan rekeyInterrupt
+	ui          *RekeyUI
+	uiRouter    *UIRouter
 }
 
 func newRekeyMaster(g *libkb.GlobalContext) *rekeyMaster {
@@ -118,13 +120,70 @@ func (r *rekeyMaster) queryAPIServer() (keybase1.ProblemSet, error) {
 
 func (r *rekeyMaster) runOnce(ri rekeyInterrupt) (ret time.Duration, err error) {
 	defer r.G().Trace(fmt.Sprintf("rekeyMaster#runOnce(%d)", ri), func() error { return err })()
+	var problemsAndDevices *keybase1.ProblemSetDevices
 
 	// compute which folders if any have problems
-	ret, _, err = r.computeProblems()
+	ret, problemsAndDevices, err = r.computeProblems()
+	if err != nil {
+		return ret, err
+	}
 
-	// TODO: act upon the problems by spawning or refreshing the rekeyUI
-
+	err = r.actOnProblems(problemsAndDevices)
 	return ret, err
+}
+
+func (r *rekeyMaster) getUI(remake bool) (ret *RekeyUI, err error) {
+	ret, err = r.uiRouter.getOrReuseRekeyUI(r.ui, remake)
+	r.ui = ret
+	return ret, err
+}
+
+func (r *rekeyMaster) clearUI() (err error) {
+	defer r.G().Trace("rekeyMaster#clearUI", func() error { return err })()
+
+	var ui *RekeyUI
+	ui, err = r.getUI(false /* remake */)
+
+	if err != nil {
+		return err
+	}
+	if ui == nil {
+		r.G().Log.Debug("| UI wasn't active, so nothing to do")
+		return nil
+	}
+
+	err = ui.Refresh(context.Background(), keybase1.RefreshArg{})
+	return err
+}
+
+func (r *rekeyMaster) spawnOrRefreshUI(problemSetDevices keybase1.ProblemSetDevices) (err error) {
+	defer r.G().Trace("rekeyMaster#spawnOrRefreshUI", func() error { return err })()
+
+	var ui *RekeyUI
+	ui, err = r.getUI(true /* remake */)
+	if err != nil {
+		return err
+	}
+
+	if ui == nil {
+		r.G().Log.Info("| Rekey needed, but no active UI; consult logs")
+		return nil
+	}
+
+	err = ui.Refresh(context.Background(), keybase1.RefreshArg{ProblemSetDevices: problemSetDevices})
+	return err
+}
+
+func (r *rekeyMaster) actOnProblems(problemsAndDevices *keybase1.ProblemSetDevices) (err error) {
+	defer r.G().Trace(fmt.Sprintf("rekeyMaster#actOnProblems(%v)", problemsAndDevices != nil), func() error { return err })()
+
+	if problemsAndDevices == nil {
+		err = r.clearUI()
+		return err
+	}
+
+	err = r.spawnOrRefreshUI(*problemsAndDevices)
+	return err
 }
 
 func (r *rekeyMaster) computeProblems() (nextWait time.Duration, problemsAndDevices *keybase1.ProblemSetDevices, err error) {

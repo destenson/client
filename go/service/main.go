@@ -166,7 +166,9 @@ func (d *Service) Run() (err error) {
 	// Sets this global context to "service" mode which will toggle a flag
 	// and will also set in motion various go-routine based managers
 	d.G().SetService()
-	d.G().SetUIRouter(NewUIRouter(d.G()))
+	uir := NewUIRouter(d.G())
+	d.G().SetUIRouter(uir)
+	d.rekeyMaster.uiRouter = uir
 
 	// register the service's logForwarder as the external handler for the log module:
 	d.G().Log.SetExternalHandler(d.logForwarder)
