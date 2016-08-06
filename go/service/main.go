@@ -30,6 +30,7 @@ type Service struct {
 	stopCh       chan keybase1.ExitCode
 	logForwarder *logFwd
 	gregor       *gregorHandler
+	rekeyMaster  *rekeyMaster
 }
 
 type Shutdowner interface {
@@ -43,6 +44,7 @@ func NewService(g *libkb.GlobalContext, isDaemon bool) *Service {
 		startCh:      make(chan struct{}),
 		stopCh:       make(chan keybase1.ExitCode),
 		logForwarder: newLogFwd(),
+		rekeyMaster:  newRekeyMaster(g),
 	}
 }
 
@@ -231,7 +233,9 @@ func (d *Service) startupGregor() {
 
 		// Add default handlers
 		d.gregor.PushHandler(newUserHandler(d.G()))
+		// TODO -- get rid of this?
 		d.gregor.PushHandler(newRekeyLogHandler(d.G()))
+		d.gregor.PushHandler(d.rekeyMaster.gregorHandler())
 
 		// Connect to gregord
 		if gcErr := d.tryGregordConnect(); gcErr != nil {
