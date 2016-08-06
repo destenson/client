@@ -53,11 +53,7 @@ func (d *Service) GetStartChannel() <-chan struct{} {
 }
 
 func (d *Service) RegisterProtocols(srv *rpc.Server, xp rpc.Transporter, connID libkb.ConnectionID, logReg *logRegister, g *libkb.GlobalContext) (shutdowners []Shutdowner, err error) {
-	rekeyHandler := NewRekeyHandler(xp, g, d.gregor)
-
-	// The rekeyHandler implements Shutdowner interface to stop the timer
-	// properly
-	shutdowners = append(shutdowners, rekeyHandler)
+	rekeyHandler := NewRekeyHandler2(xp, g, d.rekeyMaster)
 
 	protocols := []rpc.Protocol{
 		keybase1.AccountProtocol(NewAccountHandler(xp, g)),
@@ -168,7 +164,6 @@ func (d *Service) Run() (err error) {
 	d.G().SetService()
 	uir := NewUIRouter(d.G())
 	d.G().SetUIRouter(uir)
-	d.rekeyMaster.uiRouter = uir
 
 	// register the service's logForwarder as the external handler for the log module:
 	d.G().Log.SetExternalHandler(d.logForwarder)
@@ -208,10 +203,18 @@ func (d *Service) Run() (err error) {
 	d.startupGregor()
 	d.addGlobalHooks()
 	d.configurePath()
+	d.configureRekey(uir)
 
 	d.G().ExitCode, err = d.ListenLoopWithStopper(l)
 
 	return err
+}
+
+func (d *Service) configureRekey(uir *UIRouter) {
+	rkm := d.rekeyMaster
+	rkm.uiRouter = uir
+	d.gregor.PushHandler(rkm)
+	rkm.Start()
 }
 
 func (d *Service) startupGregor() {

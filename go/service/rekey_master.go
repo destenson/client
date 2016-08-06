@@ -4,9 +4,11 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"github.com/keybase/client/go/libkb"
 	keybase1 "github.com/keybase/client/go/protocol"
+	rpc "github.com/keybase/go-framed-msgpack-rpc"
 	gregor "github.com/keybase/gregor"
 	gregor1 "github.com/keybase/gregor/protocol/gregor1"
 	context "golang.org/x/net/context"
@@ -79,12 +81,14 @@ func (r *rekeyMaster) Login() {
 type rekeyInterrupt int
 
 const (
-	rekeyInterruptNone      rekeyInterrupt = 0
-	rekeyInterruptTimeout   rekeyInterrupt = 1
-	rekeyInterruptCreation  rekeyInterrupt = 2
-	rekeyInterruptDismissal rekeyInterrupt = 3
-	rekeyInterruptLogout    rekeyInterrupt = 4
-	rekeyInterruptLogin     rekeyInterrupt = 5
+	rekeyInterruptNone       rekeyInterrupt = 0
+	rekeyInterruptTimeout    rekeyInterrupt = 1
+	rekeyInterruptCreation   rekeyInterrupt = 2
+	rekeyInterruptDismissal  rekeyInterrupt = 3
+	rekeyInterruptLogout     rekeyInterrupt = 4
+	rekeyInterruptLogin      rekeyInterrupt = 5
+	rekeyInterruptUIFinished rekeyInterrupt = 6
+	rekeyInterruptShowUI     rekeyInterrupt = 7
 )
 const (
 	rekeyTimeoutBackground      = 24 * time.Hour
@@ -92,6 +96,7 @@ const (
 	rekeyTimeoutLoadMeError     = 3 * time.Minute
 	rekeyTimeoutDeviceLoadError = 3 * time.Minute
 	rekeyTimeoutActive          = 1 * time.Minute
+	rekeyTimeoutUIFinished      = 24 * time.Hour
 )
 
 type rekeyQueryResult struct {
@@ -103,14 +108,14 @@ func (r *rekeyQueryResult) GetAppStatus() *libkb.AppStatus {
 	return &r.Status
 }
 
-func (r *rekeyMaster) queryAPIServer() (keybase1.ProblemSet, error) {
+func queryAPIServerForRekeyInfo(g *libkb.GlobalContext) (keybase1.ProblemSet, error) {
 	args := libkb.HTTPArgs{
 		"clear": libkb.B{Val: true},
 	}
 	var tmp rekeyQueryResult
 	// We have to post to use the clear=true feature
-	err := r.G().API.PostDecode(libkb.APIArg{
-		Contextified: libkb.NewContextified(r.G()),
+	err := g.API.PostDecode(libkb.APIArg{
+		Contextified: libkb.NewContextified(g),
 		Endpoint:     "kbfs/problem_sets",
 		NeedSession:  true,
 		Args:         args,
@@ -121,6 +126,12 @@ func (r *rekeyMaster) queryAPIServer() (keybase1.ProblemSet, error) {
 func (r *rekeyMaster) runOnce(ri rekeyInterrupt) (ret time.Duration, err error) {
 	defer r.G().Trace(fmt.Sprintf("rekeyMaster#runOnce(%d)", ri), func() error { return err })()
 	var problemsAndDevices *keybase1.ProblemSetDevices
+
+	if ri == rekeyInterruptUIFinished {
+		ret = rekeyTimeoutUIFinished
+		r.G().Log.Debug("| UI said finished; snoozing %ds", ret)
+		return ret, nil
+	}
 
 	// compute which folders if any have problems
 	ret, problemsAndDevices, err = r.computeProblems()
@@ -153,6 +164,11 @@ func (r *rekeyMaster) clearUI() (err error) {
 	}
 
 	err = ui.Refresh(context.Background(), keybase1.RefreshArg{})
+
+	// No longer any reason to hold onto this session/UI. The next
+	// time we go through, we'll just make a new one.
+	r.ui = nil
+
 	return err
 }
 
@@ -196,7 +212,7 @@ func (r *rekeyMaster) computeProblems() (nextWait time.Duration, problemsAndDevi
 	}
 
 	var problems keybase1.ProblemSet
-	problems, err = r.queryAPIServer()
+	problems, err = queryAPIServerForRekeyInfo(r.G())
 	if err != nil {
 		nextWait = rekeyTimeoutAPIError
 		r.G().Log.Debug("| snoozing rekeyMaster for %ds on API error", nextWait)
@@ -283,3 +299,97 @@ func (r *rekeyMaster) mainLoop() {
 		}
 	}
 }
+
+type RekeyHandler2 struct {
+	libkb.Contextified
+	*BaseHandler
+	rm *rekeyMaster
+}
+
+func NewRekeyHandler2(xp rpc.Transporter, g *libkb.GlobalContext, rm *rekeyMaster) *RekeyHandler2 {
+	return &RekeyHandler2{
+		Contextified: libkb.NewContextified(g),
+		BaseHandler:  NewBaseHandler(xp),
+		rm:           rm,
+	}
+}
+
+func (r *RekeyHandler2) ShowPendingRekeyStatus(context.Context, int) error {
+	r.rm.interruptCh <- rekeyInterruptShowUI
+	return nil
+}
+
+func (r *RekeyHandler2) GetPendingRekeyStatus(_ context.Context, _ int) (ret keybase1.ProblemSetDevices, err error) {
+	var me *libkb.User
+	me, err = libkb.LoadMe(libkb.NewLoadUserArg(r.G()))
+	if err != nil {
+		return ret, err
+	}
+	var problemSet keybase1.ProblemSet
+	problemSet, err = queryAPIServerForRekeyInfo(r.G())
+	if err != nil {
+		return ret, err
+	}
+	ret, err = newProblemSetDevices(me, problemSet)
+	return ret, err
+}
+
+func (r *RekeyHandler2) RekeyStatusFinish(_ context.Context, _ int) (ret keybase1.Outcome, err error) {
+	r.rm.interruptCh <- rekeyInterruptUIFinished
+	ret = keybase1.Outcome_NONE
+	return ret, err
+}
+
+func (r *RekeyHandler2) DebugShowRekeyStatus(ctx context.Context, sessionID int) error {
+	if r.G().Env.GetRunMode() == libkb.ProductionRunMode {
+		return errors.New("DebugShowRekeyStatus is a devel-only RPC")
+	}
+
+	me, err := libkb.LoadMe(libkb.NewLoadUserArg(r.G()))
+	if err != nil {
+		return err
+	}
+
+	arg := keybase1.RefreshArg{
+		SessionID: sessionID,
+		ProblemSetDevices: keybase1.ProblemSetDevices{
+			ProblemSet: keybase1.ProblemSet{
+				User: keybase1.User{
+					Uid:      me.GetUID(),
+					Username: me.GetName(),
+				},
+				Tlfs: []keybase1.ProblemTLF{
+					keybase1.ProblemTLF{
+						Tlf: keybase1.TLF{
+							// this is only for debugging
+							Name:      "/keybase/private/" + me.GetName(),
+							Writers:   []string{me.GetName()},
+							Readers:   []string{me.GetName()},
+							IsPrivate: true,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	devices := me.GetComputedKeyFamily().GetAllActiveDevices()
+	arg.ProblemSetDevices.Devices = make([]keybase1.Device, len(devices))
+	for i, dev := range devices {
+		arg.ProblemSetDevices.Devices[i] = *(dev.ProtExport())
+	}
+
+	rekeyUI, err := r.G().UIRouter.GetRekeyUINoSessionID()
+	if err != nil {
+		return err
+	}
+	if rekeyUI == nil {
+		r.G().Log.Debug("no rekey ui, would have called refresh with this:")
+		r.G().Log.Debug("arg: %+v", arg)
+		return errors.New("no rekey ui")
+	}
+
+	return rekeyUI.Refresh(ctx, arg)
+}
+
+var _ keybase1.RekeyInterface = (*RekeyHandler2)(nil)
