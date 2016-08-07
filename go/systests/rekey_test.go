@@ -26,7 +26,10 @@ package systests
 import (
 	"github.com/keybase/client/go/client"
 	"github.com/keybase/client/go/libkb"
+	keybase1 "github.com/keybase/client/go/protocol"
 	"github.com/keybase/client/go/service"
+	rpc "github.com/keybase/go-framed-msgpack-rpc"
+	context "golang.org/x/net/context"
 	"testing"
 )
 
@@ -67,6 +70,7 @@ func (d *serviceWrapper) popClone() *libkb.TestContext {
 type rekeyTester struct {
 	t              *testing.T
 	serviceWrapper *serviceWrapper
+	rekeyUI        *testRekeyUI
 }
 
 func newRekeyTester(t *testing.T) *rekeyTester {
@@ -81,11 +85,34 @@ func (rkt *rekeyTester) setup(nm string) {
 }
 
 func (rkt *rekeyTester) startService() {
-	rkt.serviceWrapper.start(1)
+	rkt.serviceWrapper.start(2)
 }
 
 func (rkt *rekeyTester) cleanup() {
 	rkt.serviceWrapper.tctx.Cleanup()
+}
+
+type testRekeyUI struct {
+	sessionID int
+	refreshes chan keybase1.RefreshArg
+}
+
+func (ui *testRekeyUI) DelegateRekeyUI(_ context.Context) (int, error) {
+	ui.sessionID++
+	ret := ui.sessionID
+	return ret, nil
+}
+
+func (ui *testRekeyUI) Refresh(_ context.Context, arg keybase1.RefreshArg) error {
+	ui.refreshes <- arg
+	return nil
+}
+
+func newTestRekeyUI() *testRekeyUI {
+	return &testRekeyUI{
+		sessionID: 0,
+		refreshes: make(chan keybase1.RefreshArg, 1000),
+	}
 }
 
 func (rkt *rekeyTester) signupUserWithOneDevice() {
@@ -105,11 +132,39 @@ func (rkt *rekeyTester) signupUserWithOneDevice() {
 	rkt.t.Logf("signed up %s", userInfo.username)
 }
 
+func (rkt *rekeyTester) startRekeyUI() {
+	ui := newTestRekeyUI()
+	rkt.rekeyUI = ui
+	tctx := rkt.serviceWrapper.popClone()
+	g := tctx.G
+
+	launch := func() error {
+		cli, xp, err := client.GetRPCClientWithContext(g)
+		if err != nil {
+			return err
+		}
+		srv := rpc.NewServer(xp, nil)
+		if err = srv.Register(keybase1.RekeyUIProtocol(ui)); err != nil {
+			return err
+		}
+		ncli := keybase1.DelegateUiCtlClient{Cli: cli}
+		if err = ncli.RegisterRekeyUI(context.TODO()); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	if err := launch(); err != nil {
+		rkt.t.Fatalf("Failed to launch rekey UI: %s", err)
+	}
+}
+
 func TestRekey(t *testing.T) {
 	rkt := newRekeyTester(t)
 	rkt.setup("rekey")
 	defer rkt.cleanup()
 
 	rkt.startService()
+	rkt.startRekeyUI()
 	rkt.signupUserWithOneDevice()
 }
