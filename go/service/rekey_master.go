@@ -17,10 +17,12 @@ import (
 
 type rekeyMaster struct {
 	libkb.Contextified
-	interruptCh chan rekeyInterrupt
-	ui          *RekeyUI
-	uiRouter    *UIRouter
-	snoozeUntil time.Time
+	interruptCh   chan rekeyInterrupt
+	ui            *RekeyUI
+	uiRouter      *UIRouter
+	snoozeUntil   time.Time
+	plannedWakeup time.Time
+	uiNeeded      bool
 }
 
 func newRekeyMaster(g *libkb.GlobalContext) *rekeyMaster {
@@ -79,6 +81,10 @@ func (r *rekeyMaster) Login() {
 	r.interruptCh <- rekeyInterruptLogin
 }
 
+func (r *rekeyMaster) newUIRegistered() {
+	r.interruptCh <- rekeyInterruptNewUI
+}
+
 type rekeyInterrupt int
 
 const (
@@ -90,6 +96,7 @@ const (
 	rekeyInterruptLogin      rekeyInterrupt = 5
 	rekeyInterruptUIFinished rekeyInterrupt = 6
 	rekeyInterruptShowUI     rekeyInterrupt = 7
+	rekeyInterruptNewUI      rekeyInterrupt = 8
 )
 const (
 	rekeyTimeoutBackground      = 24 * time.Hour
@@ -153,6 +160,16 @@ func (r *rekeyMaster) continueLongSnooze(ri rekeyInterrupt) (ret time.Duration) 
 	return dur
 }
 
+func (r *rekeyMaster) resumeSleep() time.Duration {
+	if r.plannedWakeup.IsZero() {
+		return rekeyTimeoutBackground
+	}
+	if ret := r.plannedWakeup.Sub(r.G().Clock().Now()); ret > 0 {
+		return ret
+	}
+	return rekeyTimeoutActive
+}
+
 func (r *rekeyMaster) runOnce(ri rekeyInterrupt) (ret time.Duration, err error) {
 	defer r.G().Trace(fmt.Sprintf("rekeyMaster#runOnce(%d)", ri), func() error { return err })()
 	var problemsAndDevices *keybase1.ProblemSetDevices
@@ -162,6 +179,11 @@ func (r *rekeyMaster) runOnce(ri rekeyInterrupt) (ret time.Duration, err error) 
 		r.snoozeUntil = r.G().Clock().Now().Add(ret)
 		r.G().Log.Debug("| UI said finished; hard-snoozing %ds", ret)
 		return ret, nil
+	}
+
+	if ri == rekeyInterruptNewUI && !r.uiNeeded {
+		r.G().Log.Debug("| we got a new UI but didn't need it; resuming sleep")
+		return r.resumeSleep(), nil
 	}
 
 	if ret = r.continueLongSnooze(ri); ret > 0 {
@@ -219,8 +241,10 @@ func (r *rekeyMaster) spawnOrRefreshUI(problemSetDevices keybase1.ProblemSetDevi
 
 	if ui == nil {
 		r.G().Log.Info("| Rekey needed, but no active UI; consult logs")
+		r.uiNeeded = true
 		return nil
 	}
+	r.uiNeeded = false
 
 	err = ui.Refresh(context.Background(), keybase1.RefreshArg{ProblemSetDevices: problemSetDevices})
 	return err
@@ -323,16 +347,24 @@ func (r *rekeyMaster) currentDeviceSolvesProblemSet(me *libkb.User, ps keybase1.
 }
 
 func (r *rekeyMaster) mainLoop() {
-	// By default, check in once a day
-	var it rekeyInterrupt
+
+	// Sleep about ten seconds on startup so as to wait for startup sequence.
+	// It's ok if we race here, but it's less work if we don't.
+	timeout := 10 * time.Second
+
 	for {
-		timeout, _ := r.runOnce(it)
+
+		var it rekeyInterrupt
+
 		select {
 		case it = <-r.interruptCh:
 			break
 		case <-r.G().Clock().After(timeout):
 			it = rekeyInterruptTimeout
 		}
+
+		timeout, _ = r.runOnce(it)
+		r.plannedWakeup = r.G().Clock().Now().Add(timeout)
 	}
 }
 

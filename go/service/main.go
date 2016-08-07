@@ -62,7 +62,7 @@ func (d *Service) RegisterProtocols(srv *rpc.Server, xp rpc.Transporter, connID 
 		keybase1.CryptoProtocol(NewCryptoHandler(g)),
 		keybase1.CtlProtocol(NewCtlHandler(xp, d, g)),
 		keybase1.DebuggingProtocol(NewDebuggingHandler(xp)),
-		keybase1.DelegateUiCtlProtocol(NewDelegateUICtlHandler(xp, connID, g)),
+		keybase1.DelegateUiCtlProtocol(NewDelegateUICtlHandler(xp, connID, g, d.rekeyMaster)),
 		keybase1.DeviceProtocol(NewDeviceHandler(xp, g)),
 		keybase1.FavoriteProtocol(NewFavoriteHandler(xp, g)),
 		keybase1.FsProtocol(newFSHandler(xp, g)),
