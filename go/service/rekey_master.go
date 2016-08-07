@@ -152,7 +152,8 @@ func (r *rekeyMaster) runOnce(ri rekeyInterrupt) (ret time.Duration, err error) 
 
 	if ri == rekeyInterruptUIFinished {
 		ret = rekeyTimeoutUIFinished
-		r.G().Log.Debug("| UI said finished; snoozing %ds", ret)
+		r.snoozeUntil = r.G().Clock().Now().Add(ret)
+		r.G().Log.Debug("| UI said finished; hard-snoozing %ds", ret)
 		return ret, nil
 	}
 
