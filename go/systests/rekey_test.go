@@ -22,3 +22,72 @@ package systests
 //  15. Assert the window is dismissed within ~1 minute.
 //  16. Assert that our gregor queue is empty for this category.
 //
+
+import (
+	"github.com/keybase/client/go/libkb"
+	"github.com/keybase/client/go/service"
+	"testing"
+)
+
+type serviceWrapper struct {
+	tctx    *libkb.TestContext
+	clones  []*libkb.TestContext
+	stopCh  chan error
+	service *service.Service
+}
+
+func (d *serviceWrapper) start(numClones int) {
+	for i := 0; i < numClones; i++ {
+		d.clones = append(d.clones, cloneContext(d.tctx))
+	}
+	d.stopCh = make(chan error)
+	svc := service.NewService(d.tctx.G, false)
+	d.service = svc
+	startCh := svc.GetStartChannel()
+	go func() {
+		d.stopCh <- svc.Run()
+	}()
+	<-startCh
+}
+
+func (d *serviceWrapper) stop() error {
+	return <-d.stopCh
+}
+
+type rekeyTester struct {
+	t              *testing.T
+	serviceWrapper *serviceWrapper
+}
+
+func newRekeyTester(t *testing.T) *rekeyTester {
+	return &rekeyTester{
+		t: t,
+	}
+}
+
+func (rkt *rekeyTester) setup(nm string) {
+	tctx := setupTest(rkt.t, nm)
+	rkt.serviceWrapper = &serviceWrapper{tctx: tctx}
+}
+
+func (rkt *rekeyTester) startService() {
+	rkt.serviceWrapper.start(1)
+}
+
+func (rkt *rekeyTester) cleanup() {
+	rkt.serviceWrapper.tctx.Cleanup()
+}
+
+func (rkt *rekeyTester) signupUserWithOnceDevice() {
+
+}
+
+func TestRekey(t *testing.T) {
+	rkt := newRekeyTester(t)
+	rkt.setup("rekey")
+	defer rkt.cleanup()
+
+	rkt.startService()
+	rkt.signupUserWithOnceDevice()
+
+}
