@@ -24,6 +24,7 @@ package systests
 //
 
 import (
+	"github.com/keybase/client/go/client"
 	"github.com/keybase/client/go/libkb"
 	"github.com/keybase/client/go/service"
 	"testing"
@@ -54,6 +55,15 @@ func (d *serviceWrapper) stop() error {
 	return <-d.stopCh
 }
 
+func (d *serviceWrapper) popClone() *libkb.TestContext {
+	if len(d.clones) == 0 {
+		panic("ran out of cloned environments")
+	}
+	ret := d.clones[0]
+	d.clones = d.clones[1:]
+	return ret
+}
+
 type rekeyTester struct {
 	t              *testing.T
 	serviceWrapper *serviceWrapper
@@ -78,8 +88,21 @@ func (rkt *rekeyTester) cleanup() {
 	rkt.serviceWrapper.tctx.Cleanup()
 }
 
-func (rkt *rekeyTester) signupUserWithOnceDevice() {
-
+func (rkt *rekeyTester) signupUserWithOneDevice() {
+	userInfo := randomUser("rekey")
+	tctx := rkt.serviceWrapper.popClone()
+	g := tctx.G
+	signupUI := signupUI{
+		info:         userInfo,
+		Contextified: libkb.NewContextified(g),
+	}
+	g.SetUI(&signupUI)
+	signup := client.NewCmdSignupRunner(g)
+	signup.SetTest()
+	if err := signup.Run(); err != nil {
+		rkt.t.Fatal(err)
+	}
+	rkt.t.Logf("signed up %s", userInfo.username)
 }
 
 func TestRekey(t *testing.T) {
@@ -88,6 +111,5 @@ func TestRekey(t *testing.T) {
 	defer rkt.cleanup()
 
 	rkt.startService()
-	rkt.signupUserWithOnceDevice()
-
+	rkt.signupUserWithOneDevice()
 }
