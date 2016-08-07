@@ -124,26 +124,33 @@ func queryAPIServerForRekeyInfo(g *libkb.GlobalContext) (keybase1.ProblemSet, er
 	return tmp.ProblemSet, err
 }
 
-func (r *rekeyMaster) continueLongSnooze(ri rekeyInterrupt) bool {
+func (r *rekeyMaster) continueLongSnooze(ri rekeyInterrupt) (ret time.Duration) {
+
+	r.G().Log.Debug("+ rekeyMaster#continueLongSnooze")
+	defer func() {
+		r.G().Log.Debug("- rekeyMaster#continueLongSnooze -> %s", ret)
+	}()
 
 	if r.snoozeUntil.IsZero() {
-		return false
+		return ret
 	}
 
-	if r.G().Clock().Now().After(r.snoozeUntil) {
-		r.G().Log.Debug("| Snooze deadline exceeded")
+	dur := r.snoozeUntil.Sub(r.G().Clock().Now())
+
+	if dur <= 0 {
+		r.G().Log.Debug("| Snooze deadline exceeded (%s ago)", -dur)
 		r.snoozeUntil = time.Time{}
-		return false
+		return ret
 	}
 
 	if ri == rekeyInterruptLogin {
 		r.G().Log.Debug("| resetting snooze until after new login")
 		r.snoozeUntil = time.Time{}
-		return false
+		return ret
 	}
 
-	r.G().Log.Debug("| Skipping compute and act, since snoozing until %s", r.snoozeUntil)
-	return true
+	r.G().Log.Debug("| Snoozing until %s (%s more)", r.snoozeUntil, dur)
+	return dur
 }
 
 func (r *rekeyMaster) runOnce(ri rekeyInterrupt) (ret time.Duration, err error) {
@@ -157,9 +164,9 @@ func (r *rekeyMaster) runOnce(ri rekeyInterrupt) (ret time.Duration, err error) 
 		return ret, nil
 	}
 
-	if r.continueLongSnooze(ri) {
-		r.G().Log.Debug("| Skipping copmute and act due to long snooze")
-		return
+	if ret = r.continueLongSnooze(ri); ret > 0 {
+		r.G().Log.Debug("| Skipping compute and act due to long snooze")
+		return ret, nil
 	}
 
 	// compute which folders if any have problems
