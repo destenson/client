@@ -24,6 +24,7 @@ package systests
 //
 
 import (
+	"github.com/jonboulle/clockwork"
 	"github.com/keybase/client/go/client"
 	"github.com/keybase/client/go/libkb"
 	keybase1 "github.com/keybase/client/go/protocol"
@@ -31,6 +32,7 @@ import (
 	rpc "github.com/keybase/go-framed-msgpack-rpc"
 	context "golang.org/x/net/context"
 	"testing"
+	"time"
 )
 
 type serviceWrapper struct {
@@ -71,6 +73,7 @@ type rekeyTester struct {
 	t              *testing.T
 	serviceWrapper *serviceWrapper
 	rekeyUI        *testRekeyUI
+	fakeClock      clockwork.FakeClock
 }
 
 func newRekeyTester(t *testing.T) *rekeyTester {
@@ -81,6 +84,9 @@ func newRekeyTester(t *testing.T) *rekeyTester {
 
 func (rkt *rekeyTester) setup(nm string) {
 	tctx := setupTest(rkt.t, nm)
+	fakeClock := clockwork.NewFakeClockAt(time.Now())
+	rkt.fakeClock = fakeClock
+	tctx.G.SetClock(fakeClock)
 	rkt.serviceWrapper = &serviceWrapper{tctx: tctx}
 }
 
@@ -159,6 +165,17 @@ func (rkt *rekeyTester) startRekeyUI() {
 	}
 }
 
+func (rkt *rekeyTester) confirmNoRekeyUIActivity() {
+	for i := 0; i < 28; i++ {
+		select {
+		case <-rkt.rekeyUI.refreshes:
+			rkt.t.Errorf("Didn't expect any rekeys; got one at hour %d\n", i)
+		default:
+		}
+		rkt.fakeClock.Advance(time.Hour)
+	}
+}
+
 func TestRekey(t *testing.T) {
 	rkt := newRekeyTester(t)
 	rkt.setup("rekey")
@@ -167,4 +184,5 @@ func TestRekey(t *testing.T) {
 	rkt.startService()
 	rkt.startRekeyUI()
 	rkt.signupUserWithOneDevice()
+	rkt.confirmNoRekeyUIActivity()
 }
