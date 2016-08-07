@@ -20,6 +20,7 @@ type rekeyMaster struct {
 	interruptCh chan rekeyInterrupt
 	ui          *RekeyUI
 	uiRouter    *UIRouter
+	snoozeUntil time.Time
 }
 
 func newRekeyMaster(g *libkb.GlobalContext) *rekeyMaster {
@@ -123,6 +124,28 @@ func queryAPIServerForRekeyInfo(g *libkb.GlobalContext) (keybase1.ProblemSet, er
 	return tmp.ProblemSet, err
 }
 
+func (r *rekeyMaster) continueLongSnooze(ri rekeyInterrupt) bool {
+
+	if r.snoozeUntil.IsZero() {
+		return false
+	}
+
+	if r.G().Clock().Now().After(r.snoozeUntil) {
+		r.G().Log.Debug("| Snooze deadline exceeded")
+		r.snoozeUntil = time.Time{}
+		return false
+	}
+
+	if ri == rekeyInterruptLogin {
+		r.G().Log.Debug("| resetting snooze until after new login")
+		r.snoozeUntil = time.Time{}
+		return false
+	}
+
+	r.G().Log.Debug("| Skipping compute and act, since snoozing until %s", r.snoozeUntil)
+	return true
+}
+
 func (r *rekeyMaster) runOnce(ri rekeyInterrupt) (ret time.Duration, err error) {
 	defer r.G().Trace(fmt.Sprintf("rekeyMaster#runOnce(%d)", ri), func() error { return err })()
 	var problemsAndDevices *keybase1.ProblemSetDevices
@@ -131,6 +154,11 @@ func (r *rekeyMaster) runOnce(ri rekeyInterrupt) (ret time.Duration, err error) 
 		ret = rekeyTimeoutUIFinished
 		r.G().Log.Debug("| UI said finished; snoozing %ds", ret)
 		return ret, nil
+	}
+
+	if r.continueLongSnooze(ri) {
+		r.G().Log.Debug("| Skipping copmute and act due to long snooze")
+		return
 	}
 
 	// compute which folders if any have problems
