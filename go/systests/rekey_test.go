@@ -24,6 +24,7 @@ package systests
 //
 
 import (
+	"encoding/hex"
 	"github.com/jonboulle/clockwork"
 	"github.com/keybase/client/go/client"
 	"github.com/keybase/client/go/libkb"
@@ -69,12 +70,33 @@ func (d *serviceWrapper) popClone() *libkb.TestContext {
 	return ret
 }
 
+type fakeTLF struct {
+	id       string
+	revision int
+}
+
+func newFakeTLF() *fakeTLF {
+	return &fakeTLF{
+		id:       newTLFId(),
+		revision: 0,
+	}
+}
+
+func (tlf *fakeTLF) nextRevision() int {
+	tlf.revision++
+	return tlf.revision
+}
+
 type rekeyTester struct {
 	t              *testing.T
 	serviceWrapper *serviceWrapper
 	rekeyUI        *testRekeyUI
 	fakeClock      clockwork.FakeClock
 	rekeyClient    keybase1.RekeyClient
+	userClient     keybase1.UserClient
+	deviceKey      keybase1.PublicKey
+	backupKey      keybase1.PublicKey
+	fakeTLF        *fakeTLF
 }
 
 func newRekeyTester(t *testing.T) *rekeyTester {
@@ -137,9 +159,27 @@ func (rkt *rekeyTester) signupUserWithOneDevice() {
 		rkt.t.Fatal(err)
 	}
 	rkt.t.Logf("signed up %s", userInfo.username)
+	keys, err := rkt.userClient.LoadMyPublicKeys(context.TODO(), 0)
+	if err != nil {
+		rkt.t.Errorf("Failed to LoadMyPublicKeys: %s", err)
+	}
+	for _, key := range keys {
+		switch key.DeviceType {
+		case "backup":
+			rkt.backupKey = key
+		case "desktop":
+			rkt.deviceKey = key
+		}
+	}
+	if len(rkt.deviceKey.KID) == 0 {
+		rkt.t.Fatalf("Didn't get device key back for user")
+	}
+	if len(rkt.backupKey.KID) == 0 {
+		rkt.t.Fatalf("Didn't get backup key back for user")
+	}
 }
 
-func (rkt *rekeyTester) startRekeyUI() {
+func (rkt *rekeyTester) startUIsAndClients() {
 	ui := newTestRekeyUI()
 	rkt.rekeyUI = ui
 	tctx := rkt.serviceWrapper.popClone()
@@ -159,6 +199,7 @@ func (rkt *rekeyTester) startRekeyUI() {
 			return err
 		}
 		rkt.rekeyClient = keybase1.RekeyClient{Cli: cli}
+		rkt.userClient = keybase1.UserClient{Cli: cli}
 		return nil
 	}
 
@@ -187,13 +228,51 @@ func (rkt *rekeyTester) confirmNoRekeyUIActivity() {
 	assertNoActivity(29)
 }
 
+func newTLFId() string {
+	var b []byte
+	b, err := libkb.RandBytes(16)
+	if err != nil {
+		return ""
+	}
+	b[15] = 0x16
+	return hex.EncodeToString(b)
+}
+
+func (rkt *rekeyTester) makePartiallyKeyedHomeTLF() {
+	// Use the global context from the service for making API calls
+	// to the API server.
+	g := rkt.serviceWrapper.tctx.G
+	rkt.fakeTLF = newFakeTLF()
+	apiArg := libkb.APIArg{
+		Args: libkb.HTTPArgs{
+			"tlfid":          libkb.S{Val: rkt.fakeTLF.id},
+			"kids":           libkb.S{Val: string(rkt.deviceKey.KID)},
+			"folderRevision": libkb.I{Val: rkt.fakeTLF.nextRevision()},
+		},
+		Endpoint:     "test/fake_home_tlf",
+		NeedSession:  true,
+		Contextified: libkb.NewContextified(g),
+	}
+	_, err := g.API.Post(apiArg)
+	if err != nil {
+		rkt.t.Errorf("Failed to post fake TLF: %s", err)
+	}
+}
+
 func TestRekey(t *testing.T) {
 	rkt := newRekeyTester(t)
 	rkt.setup("rekey")
 	defer rkt.cleanup()
 
 	rkt.startService()
-	rkt.startRekeyUI()
+	rkt.startUIsAndClients()
+
+	// 1. Sign up a fake user with a device and paper key
 	rkt.signupUserWithOneDevice()
+
+	// 2. Assert no rekey activity
 	rkt.confirmNoRekeyUIActivity()
+
+	// 3. Make a private home TLF keyed only for the device key (not the paper)
+	rkt.makePartiallyKeyedHomeTLF()
 }

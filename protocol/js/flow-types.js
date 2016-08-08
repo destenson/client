@@ -3741,6 +3741,14 @@ export function userListTrackersSelfRpc (request: $Exact<{
   callback?: (null | (err: ?any, response: userListTrackersSelfResult) => void)}>) {
   engine.rpc({...request, method: 'user.listTrackersSelf'})
 }
+type userLoadMyPublicKeysResult = ?Array<PublicKey>
+
+export function userLoadMyPublicKeysRpc (request: $Exact<{
+  waitingHandler?: (waiting: boolean, method: string, sessionID: string) => void,
+  incomingCallMap?: incomingCallMapType,
+  callback?: (null | (err: ?any, response: userLoadMyPublicKeysResult) => void)}>) {
+  engine.rpc({...request, method: 'user.loadMyPublicKeys'})
+}
 export type rpc =
     BTCRegisterBTCRpc
   | Kex2ProvisioneeDidCounterSignRpc
@@ -3955,6 +3963,7 @@ export type rpc =
   | userListTrackingJSONRpc
   | userListTrackingRpc
   | userLoadAllPublicKeysUnverifiedRpc
+  | userLoadMyPublicKeysRpc
   | userLoadPublicKeysRpc
   | userLoadUncheckedUserSummariesRpc
   | userLoadUserByNameRpc
@@ -6110,6 +6119,15 @@ export type incomingCallMapType = $Exact<{
     response: {
       error: (err: RPCError) => void,
       result: (result: userLoadPublicKeysResult) => void
+    }
+  ) => void,
+  'keybase.1.user.loadMyPublicKeys'?: (
+    params: $Exact<{
+      sessionID: int
+    }>,
+    response: {
+      error: (err: RPCError) => void,
+      result: (result: userLoadMyPublicKeysResult) => void
     }
   ) => void,
   'keybase.1.user.listTracking'?: (
