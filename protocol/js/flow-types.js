@@ -152,6 +152,12 @@ export function rekeyShowPendingRekeyStatusRpc (request: $Exact<{
   callback?: (null | (err: ?any) => void)}>) {
   engine.rpc({...request, method: 'rekey.showPendingRekeyStatus'})
 }
+export function rekeySyncRpc (request: $Exact<{
+  waitingHandler?: (waiting: boolean, method: string, sessionID: string) => void,
+  incomingCallMap?: incomingCallMapType,
+  callback?: (null | (err: ?any) => void)}>) {
+  engine.rpc({...request, method: 'rekey.sync'})
+}
 export function trackCheckTrackingRpc (request: $Exact<{
   waitingHandler?: (waiting: boolean, method: string, sessionID: string) => void,
   incomingCallMap?: incomingCallMapType,
@@ -3909,6 +3915,7 @@ export type rpc =
   | rekeyGetPendingRekeyStatusRpc
   | rekeyRekeyStatusFinishRpc
   | rekeyShowPendingRekeyStatusRpc
+  | rekeySyncRpc
   | rekeyUIDelegateRekeyUIRpc
   | rekeyUIRefreshRpc
   | revokeRevokeDeviceRpc
@@ -5665,6 +5672,15 @@ export type incomingCallMapType = $Exact<{
     response: {
       error: (err: RPCError) => void,
       result: (result: rekeyRekeyStatusFinishResult) => void
+    }
+  ) => void,
+  'keybase.1.rekey.sync'?: (
+    params: $Exact<{
+      sessionID: int
+    }>,
+    response: {
+      error: (err: RPCError) => void,
+      result: () => void
     }
   ) => void,
   'keybase.1.rekeyUI.delegateRekeyUI'?: (

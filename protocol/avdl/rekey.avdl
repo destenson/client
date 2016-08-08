@@ -68,4 +68,10 @@ protocol rekey {
    can be Fixed or Ignored.
    */
   Outcome rekeyStatusFinish(int sessionID);
+
+  /**
+   sync flushes the current rekey loop and gets to a good stopping point
+   to assert state. Good for race-free testing, not very useful in production.
+   */
+  void sync(int sessionID);
 }

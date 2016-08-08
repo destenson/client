@@ -74,6 +74,7 @@ type rekeyTester struct {
 	serviceWrapper *serviceWrapper
 	rekeyUI        *testRekeyUI
 	fakeClock      clockwork.FakeClock
+	rekeyClient    keybase1.RekeyClient
 }
 
 func newRekeyTester(t *testing.T) *rekeyTester {
@@ -157,6 +158,7 @@ func (rkt *rekeyTester) startRekeyUI() {
 		if err = ncli.RegisterRekeyUI(context.TODO()); err != nil {
 			return err
 		}
+		rkt.rekeyClient = keybase1.RekeyClient{Cli: cli}
 		return nil
 	}
 
@@ -166,14 +168,23 @@ func (rkt *rekeyTester) startRekeyUI() {
 }
 
 func (rkt *rekeyTester) confirmNoRekeyUIActivity() {
-	for i := 0; i < 28; i++ {
+	assertNoActivity := func(hour int) {
 		select {
 		case <-rkt.rekeyUI.refreshes:
-			rkt.t.Errorf("Didn't expect any rekeys; got one at hour %d\n", i)
+			rkt.t.Errorf("Didn't expect any rekeys; got one at hour %d\n", hour)
 		default:
 		}
+	}
+
+	for i := 0; i < 28; i++ {
+		assertNoActivity(i)
 		rkt.fakeClock.Advance(time.Hour)
 	}
+	err := rkt.rekeyClient.Sync(context.TODO(), 0)
+	if err != nil {
+		rkt.t.Errorf("Error syncing rekey: %s", err)
+	}
+	assertNoActivity(29)
 }
 
 func TestRekey(t *testing.T) {

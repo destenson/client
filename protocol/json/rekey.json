@@ -155,6 +155,16 @@
       ],
       "response": "Outcome",
       "doc": "rekeyStatusFinish is called when work is completed on a given RekeyStatus window. The Outcome\n   can be Fixed or Ignored."
+    },
+    "sync": {
+      "request": [
+        {
+          "name": "sessionID",
+          "type": "int"
+        }
+      ],
+      "response": null,
+      "doc": "sync flushes the current rekey loop and gets to a good stopping point\n   to assert state. Good for race-free testing, not very useful in production."
     }
   },
   "namespace": "keybase.1"

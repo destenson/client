@@ -18,6 +18,7 @@ import (
 type rekeyMaster struct {
 	libkb.Contextified
 	interruptCh   chan rekeyInterrupt
+	syncCh        chan chan struct{}
 	ui            *RekeyUI
 	uiRouter      *UIRouter
 	snoozeUntil   time.Time
@@ -29,6 +30,7 @@ func newRekeyMaster(g *libkb.GlobalContext) *rekeyMaster {
 	return &rekeyMaster{
 		Contextified: libkb.NewContextified(g),
 		interruptCh:  make(chan rekeyInterrupt),
+		syncCh:       make(chan chan struct{}, 1000),
 	}
 }
 
@@ -97,6 +99,7 @@ const (
 	rekeyInterruptUIFinished rekeyInterrupt = 6
 	rekeyInterruptShowUI     rekeyInterrupt = 7
 	rekeyInterruptNewUI      rekeyInterrupt = 8
+	rekeyInterruptSync       rekeyInterrupt = 9
 )
 const (
 	rekeyTimeoutBackground      = 24 * time.Hour
@@ -355,15 +358,20 @@ func (r *rekeyMaster) mainLoop() {
 	for {
 
 		var it rekeyInterrupt
+		var ch chan struct{}
 
 		select {
 		case it = <-r.interruptCh:
-			break
 		case <-r.G().Clock().After(timeout):
 			it = rekeyInterruptTimeout
+		case ch = <-r.syncCh:
+			it = rekeyInterruptSync
 		}
 
 		timeout, _ = r.runOnce(it)
+		if ch != nil {
+			ch <- struct{}{}
+		}
 		r.plannedWakeup = r.G().Clock().Now().Add(timeout)
 	}
 }
@@ -458,6 +466,13 @@ func (r *RekeyHandler2) DebugShowRekeyStatus(ctx context.Context, sessionID int)
 	}
 
 	return rekeyUI.Refresh(ctx, arg)
+}
+
+func (r *RekeyHandler2) Sync(_ context.Context, sesisonID int) error {
+	ch := make(chan struct{})
+	r.rm.syncCh <- ch
+	<-ch
+	return nil
 }
 
 var _ keybase1.RekeyInterface = (*RekeyHandler2)(nil)
