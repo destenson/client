@@ -208,7 +208,7 @@ func (rkt *rekeyTester) startUIsAndClients() {
 	}
 }
 
-func (rkt *rekeyTester) confirmNoRekeyUIActivity() {
+func (rkt *rekeyTester) confirmNoRekeyUIActivity(hours int, force bool) {
 	assertNoActivity := func(hour int) {
 		select {
 		case <-rkt.rekeyUI.refreshes:
@@ -217,15 +217,15 @@ func (rkt *rekeyTester) confirmNoRekeyUIActivity() {
 		}
 	}
 
-	for i := 0; i < 28; i++ {
+	for i := 0; i < hours; i++ {
 		assertNoActivity(i)
 		rkt.fakeClock.Advance(time.Hour)
 	}
-	err := rkt.rekeyClient.Sync(context.TODO(), 0)
+	err := rkt.rekeyClient.RekeySync(context.TODO(), keybase1.RekeySyncArg{SessionID: 0, Force: force})
 	if err != nil {
 		rkt.t.Errorf("Error syncing rekey: %s", err)
 	}
-	assertNoActivity(29)
+	assertNoActivity(hours + 1)
 }
 
 func newTLFId() string {
@@ -255,7 +255,64 @@ func (rkt *rekeyTester) makePartiallyKeyedHomeTLF() {
 	}
 	_, err := g.API.Post(apiArg)
 	if err != nil {
-		rkt.t.Errorf("Failed to post fake TLF: %s", err)
+		rkt.t.Fatalf("Failed to post fake TLF: %s", err)
+	}
+
+	apiArg = libkb.APIArg{
+		Args: libkb.HTTPArgs{
+			"kid": libkb.S{Val: string(rkt.backupKey.KID)},
+		},
+		Endpoint:     "kbfs/bump_rekey",
+		NeedSession:  true,
+		Contextified: libkb.NewContextified(g),
+	}
+	_, err = g.API.Post(apiArg)
+	if err != nil {
+		rkt.t.Fatalf("Failed to bump rekey to front of line: %s", err)
+	}
+}
+
+func (rkt *rekeyTester) assertRekeyWindowPushed() {
+	select {
+	case <-rkt.rekeyUI.refreshes:
+	case <-time.After(20 * time.Second):
+		rkt.t.Fatalf("no gregor came in after 20s; something is broken")
+	}
+}
+
+func (rkt *rekeyTester) consumeAllRekeyRefreshes() int {
+	i := 0
+	for {
+		select {
+		case <-rkt.rekeyUI.refreshes:
+			i++
+		default:
+			break
+		}
+	}
+	return i
+}
+
+func (rkt *rekeyTester) snoozeRekeyWindow() {
+	_, err := rkt.rekeyClient.RekeyStatusFinish(context.TODO(), 0)
+	if err != nil {
+		rkt.t.Fatalf("Failed to finish rekey: %s\n", err)
+	}
+	// Our snooze should be 23 hours long, and should be resistent
+	// to interrupts.
+	rkt.confirmNoRekeyUIActivity(23, false)
+
+	// In 2 more hours, we should get rereminded
+	rkt.fakeClock.Advance(2 * time.Hour)
+
+	// Now sync so that we're sure we get a full run through the loop.
+	err = rkt.rekeyClient.RekeySync(context.TODO(), keybase1.RekeySyncArg{SessionID: 0, Force: false})
+	if err != nil {
+		rkt.t.Fatalf("Error syncing rekey: %s", err)
+	}
+
+	if rkt.consumeAllRekeyRefreshes() == 0 {
+		rkt.t.Fatal("snoozed rekey window never came back")
 	}
 }
 
@@ -271,8 +328,17 @@ func TestRekey(t *testing.T) {
 	rkt.signupUserWithOneDevice()
 
 	// 2. Assert no rekey activity
-	rkt.confirmNoRekeyUIActivity()
+	rkt.confirmNoRekeyUIActivity(28, false)
 
 	// 3. Make a private home TLF keyed only for the device key (not the paper)
 	rkt.makePartiallyKeyedHomeTLF()
+
+	// 4. wait for an incoming gregor connection for the new TLF,
+	// since it's in a broken rekey state.
+	rkt.assertRekeyWindowPushed()
+
+	// 5. Dismiss the window and assert it doesn't show up again for
+	// another 24 hours.
+	rkt.snoozeRekeyWindow()
+
 }

@@ -17,8 +17,7 @@ import (
 
 type rekeyMaster struct {
 	libkb.Contextified
-	interruptCh   chan rekeyInterrupt
-	syncCh        chan chan struct{}
+	interruptCh   chan interruptArg
 	ui            *RekeyUI
 	uiRouter      *UIRouter
 	snoozeUntil   time.Time
@@ -26,11 +25,15 @@ type rekeyMaster struct {
 	uiNeeded      bool
 }
 
+type interruptArg struct {
+	retCh          chan struct{}
+	rekeyInterrupt rekeyInterrupt
+}
+
 func newRekeyMaster(g *libkb.GlobalContext) *rekeyMaster {
 	return &rekeyMaster{
 		Contextified: libkb.NewContextified(g),
-		interruptCh:  make(chan rekeyInterrupt),
-		syncCh:       make(chan chan struct{}, 1000),
+		interruptCh:  make(chan interruptArg),
 	}
 }
 
@@ -54,7 +57,7 @@ func (r *rekeyMaster) Create(ctx context.Context, cli gregor1.IncomingInterface,
 }
 
 func (r *rekeyMaster) handleGregorCreation() error {
-	r.interruptCh <- rekeyInterruptCreation
+	r.interruptCh <- interruptArg{rekeyInterrupt: rekeyInterruptCreation}
 	return nil
 }
 
@@ -67,7 +70,7 @@ func (r *rekeyMaster) Dismiss(ctx context.Context, cli gregor1.IncomingInterface
 }
 
 func (r *rekeyMaster) handleGregorDismissal() error {
-	r.interruptCh <- rekeyInterruptDismissal
+	r.interruptCh <- interruptArg{rekeyInterrupt: rekeyInterruptDismissal}
 	return nil
 }
 
@@ -76,15 +79,15 @@ func (r *rekeyMaster) gregorHandler() *rekeyMaster {
 }
 
 func (r *rekeyMaster) Logout() {
-	r.interruptCh <- rekeyInterruptLogout
+	r.interruptCh <- interruptArg{rekeyInterrupt: rekeyInterruptLogout}
 }
 
 func (r *rekeyMaster) Login() {
-	r.interruptCh <- rekeyInterruptLogin
+	r.interruptCh <- interruptArg{rekeyInterrupt: rekeyInterruptLogin}
 }
 
 func (r *rekeyMaster) newUIRegistered() {
-	r.interruptCh <- rekeyInterruptNewUI
+	r.interruptCh <- interruptArg{rekeyInterrupt: rekeyInterruptNewUI}
 }
 
 type rekeyInterrupt int
@@ -100,6 +103,7 @@ const (
 	rekeyInterruptShowUI     rekeyInterrupt = 7
 	rekeyInterruptNewUI      rekeyInterrupt = 8
 	rekeyInterruptSync       rekeyInterrupt = 9
+	rekeyInterruptSyncForce  rekeyInterrupt = 10
 )
 const (
 	rekeyTimeoutBackground      = 24 * time.Hour
@@ -189,9 +193,11 @@ func (r *rekeyMaster) runOnce(ri rekeyInterrupt) (ret time.Duration, err error) 
 		return r.resumeSleep(), nil
 	}
 
-	if ret = r.continueLongSnooze(ri); ret > 0 {
-		r.G().Log.Debug("| Skipping compute and act due to long snooze")
-		return ret, nil
+	if ri != rekeyInterruptSyncForce {
+		if ret = r.continueLongSnooze(ri); ret > 0 {
+			r.G().Log.Debug("| Skipping compute and act due to long snooze")
+			return ret, nil
+		}
 	}
 
 	// compute which folders if any have problems
@@ -358,19 +364,18 @@ func (r *rekeyMaster) mainLoop() {
 	for {
 
 		var it rekeyInterrupt
-		var ch chan struct{}
+		var interruptArg interruptArg
 
 		select {
-		case it = <-r.interruptCh:
+		case interruptArg = <-r.interruptCh:
+			it = interruptArg.rekeyInterrupt
 		case <-r.G().Clock().After(timeout):
 			it = rekeyInterruptTimeout
-		case ch = <-r.syncCh:
-			it = rekeyInterruptSync
 		}
 
 		timeout, _ = r.runOnce(it)
-		if ch != nil {
-			ch <- struct{}{}
+		if retCh := interruptArg.retCh; retCh != nil {
+			retCh <- struct{}{}
 		}
 		r.plannedWakeup = r.G().Clock().Now().Add(timeout)
 	}
@@ -391,7 +396,7 @@ func NewRekeyHandler2(xp rpc.Transporter, g *libkb.GlobalContext, rm *rekeyMaste
 }
 
 func (r *RekeyHandler2) ShowPendingRekeyStatus(context.Context, int) error {
-	r.rm.interruptCh <- rekeyInterruptShowUI
+	r.rm.interruptCh <- interruptArg{rekeyInterrupt: rekeyInterruptShowUI}
 	return nil
 }
 
@@ -411,7 +416,7 @@ func (r *RekeyHandler2) GetPendingRekeyStatus(_ context.Context, _ int) (ret key
 }
 
 func (r *RekeyHandler2) RekeyStatusFinish(_ context.Context, _ int) (ret keybase1.Outcome, err error) {
-	r.rm.interruptCh <- rekeyInterruptUIFinished
+	r.rm.interruptCh <- interruptArg{rekeyInterrupt: rekeyInterruptUIFinished}
 	ret = keybase1.Outcome_NONE
 	return ret, err
 }
@@ -468,9 +473,13 @@ func (r *RekeyHandler2) DebugShowRekeyStatus(ctx context.Context, sessionID int)
 	return rekeyUI.Refresh(ctx, arg)
 }
 
-func (r *RekeyHandler2) Sync(_ context.Context, sesisonID int) error {
+func (r *RekeyHandler2) RekeySync(_ context.Context, arg keybase1.RekeySyncArg) error {
 	ch := make(chan struct{})
-	r.rm.syncCh <- ch
+	ri := rekeyInterruptSync
+	if arg.Force {
+		ri = rekeyInterruptSyncForce
+	}
+	r.rm.interruptCh <- interruptArg{retCh: ch, rekeyInterrupt: ri}
 	<-ch
 	return nil
 }

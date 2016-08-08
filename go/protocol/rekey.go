@@ -62,8 +62,9 @@ type RekeyStatusFinishArg struct {
 	SessionID int `codec:"sessionID" json:"sessionID"`
 }
 
-type SyncArg struct {
-	SessionID int `codec:"sessionID" json:"sessionID"`
+type RekeySyncArg struct {
+	SessionID int  `codec:"sessionID" json:"sessionID"`
+	Force     bool `codec:"force" json:"force"`
 }
 
 type RekeyInterface interface {
@@ -80,7 +81,8 @@ type RekeyInterface interface {
 	RekeyStatusFinish(context.Context, int) (Outcome, error)
 	// sync flushes the current rekey loop and gets to a good stopping point
 	// to assert state. Good for race-free testing, not very useful in production.
-	Sync(context.Context, int) error
+	// Force overrides a long-snooze.
+	RekeySync(context.Context, RekeySyncArg) error
 }
 
 func RekeyProtocol(i RekeyInterface) rpc.Protocol {
@@ -151,18 +153,18 @@ func RekeyProtocol(i RekeyInterface) rpc.Protocol {
 				},
 				MethodType: rpc.MethodCall,
 			},
-			"sync": {
+			"rekeySync": {
 				MakeArg: func() interface{} {
-					ret := make([]SyncArg, 1)
+					ret := make([]RekeySyncArg, 1)
 					return &ret
 				},
 				Handler: func(ctx context.Context, args interface{}) (ret interface{}, err error) {
-					typedArgs, ok := args.(*[]SyncArg)
+					typedArgs, ok := args.(*[]RekeySyncArg)
 					if !ok {
-						err = rpc.NewTypeError((*[]SyncArg)(nil), args)
+						err = rpc.NewTypeError((*[]RekeySyncArg)(nil), args)
 						return
 					}
-					err = i.Sync(ctx, (*typedArgs)[0].SessionID)
+					err = i.RekeySync(ctx, (*typedArgs)[0])
 					return
 				},
 				MethodType: rpc.MethodCall,
@@ -208,8 +210,8 @@ func (c RekeyClient) RekeyStatusFinish(ctx context.Context, sessionID int) (res 
 
 // sync flushes the current rekey loop and gets to a good stopping point
 // to assert state. Good for race-free testing, not very useful in production.
-func (c RekeyClient) Sync(ctx context.Context, sessionID int) (err error) {
-	__arg := SyncArg{SessionID: sessionID}
-	err = c.Cli.Call(ctx, "keybase.1.rekey.sync", []interface{}{__arg}, nil)
+// Force overrides a long-snooze.
+func (c RekeyClient) RekeySync(ctx context.Context, __arg RekeySyncArg) (err error) {
+	err = c.Cli.Call(ctx, "keybase.1.rekey.rekeySync", []interface{}{__arg}, nil)
 	return
 }

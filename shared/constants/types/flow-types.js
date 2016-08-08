@@ -152,12 +152,6 @@ export function rekeyShowPendingRekeyStatusRpc (request: $Exact<{
   callback?: (null | (err: ?any) => void)}>) {
   engine.rpc({...request, method: 'rekey.showPendingRekeyStatus'})
 }
-export function rekeySyncRpc (request: $Exact<{
-  waitingHandler?: (waiting: boolean, method: string, sessionID: string) => void,
-  incomingCallMap?: incomingCallMapType,
-  callback?: (null | (err: ?any) => void)}>) {
-  engine.rpc({...request, method: 'rekey.sync'})
-}
 export function trackCheckTrackingRpc (request: $Exact<{
   waitingHandler?: (waiting: boolean, method: string, sessionID: string) => void,
   incomingCallMap?: incomingCallMapType,
@@ -3031,6 +3025,17 @@ export function quotaVerifySessionRpc (request: $Exact<{
   callback?: (null | (err: ?any, response: quotaVerifySessionResult) => void)}>) {
   engine.rpc({...request, method: 'quota.verifySession'})
 }
+export type rekeyRekeySyncRpcParam = $Exact<{
+  force: boolean
+}>
+
+export function rekeyRekeySyncRpc (request: $Exact<{
+  param: rekeyRekeySyncRpcParam,
+  waitingHandler?: (waiting: boolean, method: string, sessionID: string) => void,
+  incomingCallMap?: incomingCallMapType,
+  callback?: (null | (err: ?any) => void)}>) {
+  engine.rpc({...request, method: 'rekey.rekeySync'})
+}
 export type rekeyUIRefreshRpcParam = $Exact<{
   problemSetDevices: ProblemSetDevices
 }>
@@ -3922,8 +3927,8 @@ export type rpc =
   | rekeyDebugShowRekeyStatusRpc
   | rekeyGetPendingRekeyStatusRpc
   | rekeyRekeyStatusFinishRpc
+  | rekeyRekeySyncRpc
   | rekeyShowPendingRekeyStatusRpc
-  | rekeySyncRpc
   | rekeyUIDelegateRekeyUIRpc
   | rekeyUIRefreshRpc
   | revokeRevokeDeviceRpc
@@ -5683,9 +5688,10 @@ export type incomingCallMapType = $Exact<{
       result: (result: rekeyRekeyStatusFinishResult) => void
     }
   ) => void,
-  'keybase.1.rekey.sync'?: (
+  'keybase.1.rekey.rekeySync'?: (
     params: $Exact<{
-      sessionID: int
+      sessionID: int,
+      force: boolean
     }>,
     response: {
       error: (err: RPCError) => void,

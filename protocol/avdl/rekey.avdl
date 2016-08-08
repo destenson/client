@@ -72,6 +72,7 @@ protocol rekey {
   /**
    sync flushes the current rekey loop and gets to a good stopping point
    to assert state. Good for race-free testing, not very useful in production.
+   Force overrides a long-snooze.
    */
-  void sync(int sessionID);
+  void rekeySync(int sessionID, boolean force);
 }
