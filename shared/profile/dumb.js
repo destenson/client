@@ -9,6 +9,7 @@ import EditAvatar from './edit-avatar'
 import Revoke from './revoke'
 import PostProof from './post-proof'
 import {normal, checking, revoked, error, metaNone, metaNew, metaDeleted, metaPending, metaUnreachable} from '../constants/tracker'
+import pgpDumb from './pgp/dumb'
 import {createFolder} from '../folders/dumb'
 import {isMobile} from '../constants/platform'
 import {globalColors} from '../styles/style-guide'
@@ -495,4 +496,5 @@ export default {
   'New Proof: Website': dumbProveWebsiteChoice,
   'New Proof: PGP': dumbProvePgpChoice,
   'New Proof: PGP import': dumbProvePgpImport,
+  ...pgpDumb,
 }
