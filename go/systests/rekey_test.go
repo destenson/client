@@ -120,7 +120,7 @@ func (rkt *rekeyTester) setup(nm string) {
 }
 
 func (rkt *rekeyTester) startService() {
-	rkt.serviceWrapper.start(2)
+	rkt.serviceWrapper.start(3)
 }
 
 func (rkt *rekeyTester) cleanup() {
@@ -348,6 +348,86 @@ func (rkt *rekeyTester) snoozeRekeyWindow() {
 	}
 }
 
+type testLoginUI struct {
+	baseNullUI
+	secret string
+}
+
+func (u *testLoginUI) DisplayPaperKeyPhrase(_ context.Context, arg keybase1.DisplayPaperKeyPhraseArg) error {
+	u.secret = arg.Phrase
+	return nil
+}
+func (u *testLoginUI) DisplayPrimaryPaperKey(context.Context, keybase1.DisplayPrimaryPaperKeyArg) error {
+	return nil
+}
+func (u *testLoginUI) PromptRevokePaperKeys(context.Context, keybase1.PromptRevokePaperKeysArg) (bool, error) {
+	return false, nil
+}
+func (u *testLoginUI) GetEmailOrUsername(context.Context, int) (string, error) {
+	return "", nil
+}
+
+func (u *testLoginUI) GetLoginUI() libkb.LoginUI {
+	return u
+}
+
+func (u *testLoginUI) GetSecretUI() libkb.SecretUI {
+	return u
+}
+
+func (u *testLoginUI) GetPassphrase(p keybase1.GUIEntryArg, terminal *keybase1.SecretEntryArg) (res keybase1.GetPassphraseRes, err error) {
+	return res, err
+}
+
+func (rkt *rekeyTester) findNewBackupKID(kids []keybase1.KID) (ret keybase1.KID) {
+	for _, kidA := range kids {
+		found := false
+		for _, bkp := range rkt.backupKeys {
+			if bkp.publicKID.Equal(kidA) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return kidA
+		}
+	}
+	return ret
+}
+
+func (rkt *rekeyTester) generateNewBackupKey() {
+	tctx := rkt.serviceWrapper.popClone()
+	g := tctx.G
+	loginUI := testLoginUI{}
+	g.SetUI(&loginUI)
+	paperGen := client.NewCmdPaperKeyRunner(g)
+	if err := paperGen.Run(); err != nil {
+		rkt.t.Fatal(err)
+	}
+	keys, err := rkt.userClient.LoadMyPublicKeys(context.TODO(), 0)
+	if err != nil {
+		rkt.t.Fatalf("Failed to LoadMyPublicKeys: %s", err)
+	}
+	var backupKey backupKey
+	backupKey.secret = loginUI.secret
+
+	var allBackupKIDs []keybase1.KID
+	for _, key := range keys {
+		switch key.DeviceType {
+		case libkb.DeviceTypePaper:
+			allBackupKIDs = append(allBackupKIDs, key.KID)
+		}
+	}
+
+	kid := rkt.findNewBackupKID(allBackupKIDs)
+	if kid.IsNil() {
+		rkt.t.Fatalf("didn't find a new backup key!")
+	}
+	backupKey.publicKID = kid
+
+	rkt.backupKeys = append(rkt.backupKeys, backupKey)
+}
+
 func TestRekey(t *testing.T) {
 	rkt := newRekeyTester(t)
 	rkt.setup("rekey")
@@ -364,6 +444,9 @@ func TestRekey(t *testing.T) {
 
 	// 3. Assert no rekey activity
 	rkt.confirmNoRekeyUIActivity(28, false)
+
+	// 4. Now delegate to a new paper key
+	rkt.generateNewBackupKey()
 
 	// 5. wait for an incoming gregor notification for the new TLF,
 	// since it's in a broken rekey state.
