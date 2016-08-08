@@ -32,6 +32,7 @@ import (
 	"github.com/keybase/client/go/service"
 	rpc "github.com/keybase/go-framed-msgpack-rpc"
 	context "golang.org/x/net/context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -246,7 +247,22 @@ func newTLFId() string {
 	return hex.EncodeToString(b)
 }
 
-func (rkt *rekeyTester) makePartiallyKeyedHomeTLF() {
+func (rkt *rekeyTester) makeFullyKeyedHomeTLF() {
+	kids := []keybase1.KID{rkt.deviceKey.KID}
+	for _, bkp := range rkt.backupKeys {
+		kids = append(kids, bkp.publicKID)
+	}
+	rkt.changeKeysOnHomeTLF(kids)
+}
+
+func (rkt *rekeyTester) changeKeysOnHomeTLF(kids []keybase1.KID) {
+
+	var kidStrings []string
+
+	for _, kid := range kids {
+		kidStrings = append(kidStrings, string(kid))
+	}
+
 	// Use the global context from the service for making API calls
 	// to the API server.
 	g := rkt.serviceWrapper.tctx.G
@@ -254,7 +270,7 @@ func (rkt *rekeyTester) makePartiallyKeyedHomeTLF() {
 	apiArg := libkb.APIArg{
 		Args: libkb.HTTPArgs{
 			"tlfid":          libkb.S{Val: rkt.fakeTLF.id},
-			"kids":           libkb.S{Val: string(rkt.deviceKey.KID)},
+			"kids":           libkb.S{Val: strings.Join(kidStrings, ",")},
 			"folderRevision": libkb.I{Val: rkt.fakeTLF.nextRevision()},
 		},
 		Endpoint:     "test/fake_home_tlf",
@@ -265,16 +281,24 @@ func (rkt *rekeyTester) makePartiallyKeyedHomeTLF() {
 	if err != nil {
 		rkt.t.Fatalf("Failed to post fake TLF: %s", err)
 	}
+}
 
-	apiArg = libkb.APIArg{
+func (rkt *rekeyTester) bumpTLF(kid keybase1.KID) {
+
+	// Use the global context from the service for making API calls
+	// to the API server.
+	g := rkt.serviceWrapper.tctx.G
+
+	apiArg := libkb.APIArg{
 		Args: libkb.HTTPArgs{
-			"kid": libkb.S{Val: string(rkt.backupKeys[0].publicKID)},
+			"kid": libkb.S{Val: string(kid)},
 		},
 		Endpoint:     "kbfs/bump_rekey",
 		NeedSession:  true,
 		Contextified: libkb.NewContextified(g),
 	}
-	_, err = g.API.Post(apiArg)
+
+	_, err := g.API.Post(apiArg)
 	if err != nil {
 		rkt.t.Fatalf("Failed to bump rekey to front of line: %s", err)
 	}
@@ -335,18 +359,18 @@ func TestRekey(t *testing.T) {
 	// 1. Sign up a fake user with a device and paper key
 	rkt.signupUserWithOneDevice()
 
-	// 2. Assert no rekey activity
+	// 2. Make a private home TLF keyed only for the device key (not the paper)
+	rkt.makeFullyKeyedHomeTLF()
+
+	// 3. Assert no rekey activity
 	rkt.confirmNoRekeyUIActivity(28, false)
 
-	// 3. Make a private home TLF keyed only for the device key (not the paper)
-	rkt.makePartiallyKeyedHomeTLF()
-
-	// 4. wait for an incoming gregor connection for the new TLF,
+	// 5. wait for an incoming gregor notification for the new TLF,
 	// since it's in a broken rekey state.
-	rkt.assertRekeyWindowPushed()
+	// rkt.assertRekeyWindowPushed()
 
-	// 5. Dismiss the window and assert it doesn't show up again for
+	// 6. Dismiss the window and assert it doesn't show up again for
 	// another 24 hours.
-	rkt.snoozeRekeyWindow()
+	// rkt.snoozeRekeyWindow()
 
 }
