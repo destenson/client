@@ -87,6 +87,11 @@ func (tlf *fakeTLF) nextRevision() int {
 	return tlf.revision
 }
 
+type backupKey struct {
+	publicKID keybase1.KID
+	secret    string
+}
+
 type rekeyTester struct {
 	t              *testing.T
 	serviceWrapper *serviceWrapper
@@ -95,7 +100,7 @@ type rekeyTester struct {
 	rekeyClient    keybase1.RekeyClient
 	userClient     keybase1.UserClient
 	deviceKey      keybase1.PublicKey
-	backupKey      keybase1.PublicKey
+	backupKeys     []backupKey
 	fakeTLF        *fakeTLF
 }
 
@@ -161,22 +166,25 @@ func (rkt *rekeyTester) signupUserWithOneDevice() {
 	rkt.t.Logf("signed up %s", userInfo.username)
 	keys, err := rkt.userClient.LoadMyPublicKeys(context.TODO(), 0)
 	if err != nil {
-		rkt.t.Errorf("Failed to LoadMyPublicKeys: %s", err)
+		rkt.t.Fatalf("Failed to LoadMyPublicKeys: %s", err)
 	}
+	var backupKey backupKey
+	backupKey.secret = signupUI.info.displayedPaperKey
 	for _, key := range keys {
 		switch key.DeviceType {
-		case "backup":
-			rkt.backupKey = key
-		case "desktop":
+		case libkb.DeviceTypePaper:
+			backupKey.publicKID = key.KID
+		case libkb.DeviceTypeDesktop:
 			rkt.deviceKey = key
 		}
 	}
 	if len(rkt.deviceKey.KID) == 0 {
 		rkt.t.Fatalf("Didn't get device key back for user")
 	}
-	if len(rkt.backupKey.KID) == 0 {
+	if len(backupKey.publicKID) == 0 {
 		rkt.t.Fatalf("Didn't get backup key back for user")
 	}
+	rkt.backupKeys = append(rkt.backupKeys, backupKey)
 }
 
 func (rkt *rekeyTester) startUIsAndClients() {
@@ -260,7 +268,7 @@ func (rkt *rekeyTester) makePartiallyKeyedHomeTLF() {
 
 	apiArg = libkb.APIArg{
 		Args: libkb.HTTPArgs{
-			"kid": libkb.S{Val: string(rkt.backupKey.KID)},
+			"kid": libkb.S{Val: string(rkt.backupKeys[0].publicKID)},
 		},
 		Endpoint:     "kbfs/bump_rekey",
 		NeedSession:  true,
