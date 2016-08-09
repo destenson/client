@@ -106,6 +106,7 @@ type rekeyTester struct {
 	deviceKey      keybase1.PublicKey
 	backupKeys     []backupKey
 	fakeTLF        *fakeTLF
+	username       string
 }
 
 func newRekeyTester(t *testing.T) *rekeyTester {
@@ -213,6 +214,7 @@ func (rkt *rekeyTester) signupUserWithOneDevice() {
 		rkt.t.Fatal(err)
 	}
 	rkt.t.Logf("signed up %s", userInfo.username)
+	rkt.username = userInfo.username
 	var backupKey backupKey
 	backupKey.secret = signupUI.info.displayedPaperKey
 	devices, backups := rkt.loadEncryptionKIDs()
@@ -499,9 +501,92 @@ func (rkt *rekeyTester) expectAlreadyKeyedNoop() {
 
 type rekeyProvisionUI struct {
 	baseNullUI
+	username string
+	paperKey string
+}
+
+func (r *rekeyProvisionUI) GetEmailOrUsername(context.Context, int) (string, error) {
+	return r.username, nil
+}
+func (r *rekeyProvisionUI) PromptRevokePaperKeys(context.Context, keybase1.PromptRevokePaperKeysArg) (ret bool, err error) {
+	return false, nil
+}
+func (r *rekeyProvisionUI) DisplayPaperKeyPhrase(context.Context, keybase1.DisplayPaperKeyPhraseArg) error {
+	return nil
+}
+func (r *rekeyProvisionUI) DisplayPrimaryPaperKey(context.Context, keybase1.DisplayPrimaryPaperKeyArg) error {
+	return nil
+}
+func (r *rekeyProvisionUI) ChooseProvisioningMethod(context.Context, keybase1.ChooseProvisioningMethodArg) (ret keybase1.ProvisionMethod, err error) {
+	return ret, nil
+}
+func (r *rekeyProvisionUI) ChooseGPGMethod(context.Context, keybase1.ChooseGPGMethodArg) (ret keybase1.GPGMethod, err error) {
+	return ret, nil
+}
+func (r *rekeyProvisionUI) SwitchToGPGSignOK(context.Context, keybase1.SwitchToGPGSignOKArg) (ret bool, err error) {
+	return ret, nil
+}
+func (r *rekeyProvisionUI) ChooseDeviceType(context.Context, keybase1.ChooseDeviceTypeArg) (ret keybase1.DeviceType, err error) {
+	return ret, nil
+}
+func (r *rekeyProvisionUI) DisplayAndPromptSecret(context.Context, keybase1.DisplayAndPromptSecretArg) (ret keybase1.SecretResponse, err error) {
+	return ret, nil
+}
+func (r *rekeyProvisionUI) DisplaySecretExchanged(context.Context, int) error {
+	return nil
+}
+func (r *rekeyProvisionUI) PromptNewDeviceName(context.Context, keybase1.PromptNewDeviceNameArg) (ret string, err error) {
+	return ret, nil
+}
+func (r *rekeyProvisionUI) ProvisioneeSuccess(context.Context, keybase1.ProvisioneeSuccessArg) error {
+	return nil
+}
+func (r *rekeyProvisionUI) ProvisionerSuccess(context.Context, keybase1.ProvisionerSuccessArg) error {
+	return nil
+}
+func (r *rekeyProvisionUI) ChooseDevice(context.Context, keybase1.ChooseDeviceArg) (ret keybase1.DeviceID, err error) {
+	return ret, nil
+}
+func (r *rekeyProvisionUI) GetPassphrase(context.Context, keybase1.GetPassphraseArg) (ret keybase1.GetPassphraseRes, err error) {
+	return ret, nil
 }
 
 func (rkt *rekeyTester) provisionNewDevice() {
+	dev2 := rkt.setupDevice("rkd2")
+	dev2.start(1)
+	tctx := dev2.popClone()
+	g := tctx.G
+	var loginClient keybase1.LoginClient
+	ui := &rekeyProvisionUI{username: rkt.username, paperKey: rkt.backupKeys[0].secret}
+
+	launch := func() error {
+		cli, xp, err := client.GetRPCClientWithContext(g)
+		if err != nil {
+			return err
+		}
+		srv := rpc.NewServer(xp, nil)
+		protocols := []rpc.Protocol{
+			keybase1.LoginUiProtocol(ui),
+			keybase1.SecretUiProtocol(ui),
+			keybase1.ProvisionUiProtocol(ui),
+		}
+		for _, prot := range protocols {
+			if err = srv.Register(prot); err != nil {
+				return err
+			}
+		}
+		ncli := keybase1.DelegateUiCtlClient{Cli: cli}
+		if err = ncli.RegisterRekeyUI(context.TODO()); err != nil {
+			return err
+		}
+		loginClient = keybase1.LoginClient{Cli: cli}
+		return nil
+	}
+
+	if err := launch(); err != nil {
+		rkt.t.Fatalf("Failed to login rekey UI: %s", err)
+	}
+
 }
 
 func TestRekey(t *testing.T) {
@@ -539,5 +624,4 @@ func TestRekey(t *testing.T) {
 	// 6. Dismiss the window and assert it doesn't show up again for
 	// another 24 hours.
 	// rkt.snoozeRekeyWindow()
-
 }
