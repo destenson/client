@@ -167,3 +167,8 @@ func (r *RekeyUI) Refresh(ctx context.Context, arg keybase1.RefreshArg) error {
 	arg.SessionID = r.sessionID
 	return r.cli.Refresh(ctx, arg)
 }
+
+func (r *RekeyUI) RekeySendEvent(ctx context.Context, arg keybase1.RekeySendEventArg) error {
+	arg.SessionID = r.sessionID
+	return r.cli.RekeySendEvent(ctx, arg)
+}

@@ -28,6 +28,7 @@ import (
 	"github.com/jonboulle/clockwork"
 	"github.com/keybase/client/go/client"
 	"github.com/keybase/client/go/libkb"
+	"github.com/keybase/client/go/logger"
 	keybase1 "github.com/keybase/client/go/protocol"
 	"github.com/keybase/client/go/service"
 	rpc "github.com/keybase/go-framed-msgpack-rpc"
@@ -95,6 +96,7 @@ type backupKey struct {
 
 type rekeyTester struct {
 	t              *testing.T
+	log            logger.Logger
 	serviceWrapper *serviceWrapper
 	rekeyUI        *testRekeyUI
 	fakeClock      clockwork.FakeClock
@@ -116,6 +118,7 @@ func (rkt *rekeyTester) setup(nm string) {
 	fakeClock := clockwork.NewFakeClockAt(time.Now())
 	rkt.fakeClock = fakeClock
 	tctx.G.SetClock(fakeClock)
+	rkt.log = tctx.G.Log
 	rkt.serviceWrapper = &serviceWrapper{tctx: tctx}
 }
 
@@ -130,6 +133,7 @@ func (rkt *rekeyTester) cleanup() {
 type testRekeyUI struct {
 	sessionID int
 	refreshes chan keybase1.RefreshArg
+	events    chan keybase1.RekeyEvent
 }
 
 func (ui *testRekeyUI) DelegateRekeyUI(_ context.Context) (int, error) {
@@ -143,10 +147,16 @@ func (ui *testRekeyUI) Refresh(_ context.Context, arg keybase1.RefreshArg) error
 	return nil
 }
 
+func (ui *testRekeyUI) RekeySendEvent(_ context.Context, arg keybase1.RekeySendEventArg) error {
+	ui.events <- arg.Event
+	return nil
+}
+
 func newTestRekeyUI() *testRekeyUI {
 	return &testRekeyUI{
 		sessionID: 0,
 		refreshes: make(chan keybase1.RefreshArg, 1000),
+		events:    make(chan keybase1.RekeyEvent, 1000),
 	}
 }
 
@@ -240,10 +250,15 @@ func (rkt *rekeyTester) startUIsAndClients() {
 
 func (rkt *rekeyTester) confirmNoRekeyUIActivity(hours int, force bool) {
 	assertNoActivity := func(hour int) {
-		select {
-		case <-rkt.rekeyUI.refreshes:
-			rkt.t.Errorf("Didn't expect any rekeys; got one at hour %d\n", hour)
-		default:
+		for {
+			select {
+			case ev := <-rkt.rekeyUI.events:
+				rkt.log.Debug("Hour %d: got rekey event: %+v", hour, ev)
+			case <-rkt.rekeyUI.refreshes:
+				rkt.t.Errorf("Didn't expect any rekeys; got one at hour %d\n", hour)
+			default:
+				return
+			}
 		}
 	}
 
@@ -440,6 +455,17 @@ func (rkt *rekeyTester) generateNewBackupKey() {
 	rkt.bumpTLF(kid)
 }
 
+func (rkt *rekeyTester) expectAlreadyKeyedNoop() {
+	select {
+	case ev := <-rkt.rekeyUI.events:
+		if ev.Type != keybase1.RekeyEventType_CURRENT_DEVICE_CAN_REKEY {
+			rkt.t.Fatalf("Got wrong event type: %+v", ev)
+		}
+	case <-time.After(10 * time.Second):
+		rkt.t.Fatal("Didn't get an event before 10s timeout")
+	}
+}
+
 func TestRekey(t *testing.T) {
 	rkt := newRekeyTester(t)
 	rkt.setup("rekey")
@@ -460,9 +486,15 @@ func TestRekey(t *testing.T) {
 	// 4. Now delegate to a new paper key
 	rkt.generateNewBackupKey()
 
+	// 5. Now assert that we weren't notified or something being up
+	// because our device is already properly keyed. And then expect
+	// no rekey activity thereafter
+	rkt.expectAlreadyKeyedNoop()
+	rkt.confirmNoRekeyUIActivity(28, false)
+
 	// 5. wait for an incoming gregor notification for the new TLF,
 	// since it's in a broken rekey state.
-	rkt.assertRekeyWindowPushed()
+	// rkt.assertRekeyWindowPushed()
 
 	// 6. Dismiss the window and assert it doesn't show up again for
 	// another 24 hours.

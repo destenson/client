@@ -180,6 +180,7 @@ func (r *rekeyMaster) resumeSleep() time.Duration {
 func (r *rekeyMaster) runOnce(ri rekeyInterrupt) (ret time.Duration, err error) {
 	defer r.G().Trace(fmt.Sprintf("rekeyMaster#runOnce(%d)", ri), func() error { return err })()
 	var problemsAndDevices *keybase1.ProblemSetDevices
+	var event keybase1.RekeyEvent
 
 	if ri == rekeyInterruptUIFinished {
 		ret = rekeyTimeoutUIFinished
@@ -201,12 +202,12 @@ func (r *rekeyMaster) runOnce(ri rekeyInterrupt) (ret time.Duration, err error) 
 	}
 
 	// compute which folders if any have problems
-	ret, problemsAndDevices, err = r.computeProblems()
+	ret, problemsAndDevices, event, err = r.computeProblems()
 	if err != nil {
 		return ret, err
 	}
 
-	err = r.actOnProblems(problemsAndDevices)
+	err = r.actOnProblems(problemsAndDevices, event)
 	return ret, err
 }
 
@@ -259,8 +260,28 @@ func (r *rekeyMaster) spawnOrRefreshUI(problemSetDevices keybase1.ProblemSetDevi
 	return err
 }
 
-func (r *rekeyMaster) actOnProblems(problemsAndDevices *keybase1.ProblemSetDevices) (err error) {
+// sendRekeyEvent sends notification of a rekey event to the UI. It's largely
+// used for testing.
+func (r *rekeyMaster) sendRekeyEvent(e keybase1.RekeyEvent) (err error) {
+	defer r.G().Trace(fmt.Sprintf("rekeyMaster#sendRekeyEvent(%v)", e), func() error { return err })()
+	var ui *RekeyUI
+	ui, err = r.getUI(false /* don't remake */)
+	if err != nil {
+		return err
+	}
+	if ui == nil {
+		r.G().Log.Debug("| no UI; not sending event information")
+		return nil
+	}
+	err = ui.RekeySendEvent(context.Background(), keybase1.RekeySendEventArg{Event: e})
+	return err
+}
+
+func (r *rekeyMaster) actOnProblems(problemsAndDevices *keybase1.ProblemSetDevices, event keybase1.RekeyEvent) (err error) {
 	defer r.G().Trace(fmt.Sprintf("rekeyMaster#actOnProblems(%v)", problemsAndDevices != nil), func() error { return err })()
+
+	// Ignore any errors
+	r.sendRekeyEvent(event)
 
 	if problemsAndDevices == nil {
 		err = r.clearUI()
@@ -271,13 +292,13 @@ func (r *rekeyMaster) actOnProblems(problemsAndDevices *keybase1.ProblemSetDevic
 	return err
 }
 
-func (r *rekeyMaster) computeProblems() (nextWait time.Duration, problemsAndDevices *keybase1.ProblemSetDevices, err error) {
+func (r *rekeyMaster) computeProblems() (nextWait time.Duration, problemsAndDevices *keybase1.ProblemSetDevices, event keybase1.RekeyEvent, err error) {
 	defer r.G().Trace("rekeyMaster#computeProblems", func() error { return err })()
 
 	if loggedIn, _, _ := libkb.IsLoggedIn(r.G(), nil); !loggedIn {
 		r.G().Log.Debug("| not logged in")
 		nextWait = rekeyTimeoutBackground
-		return nextWait, nil, err
+		return nextWait, nil, keybase1.RekeyEvent{Type: keybase1.RekeyEventType_NOT_LOGGED_IN}, err
 	}
 
 	var problems keybase1.ProblemSet
@@ -285,13 +306,13 @@ func (r *rekeyMaster) computeProblems() (nextWait time.Duration, problemsAndDevi
 	if err != nil {
 		nextWait = rekeyTimeoutAPIError
 		r.G().Log.Debug("| snoozing rekeyMaster for %ds on API error", nextWait)
-		return nextWait, nil, err
+		return nextWait, nil, keybase1.RekeyEvent{Type: keybase1.RekeyEventType_API_ERROR}, err
 	}
 
 	if len(problems.Tlfs) == 0 {
 		r.G().Log.Debug("| no problem TLFs found")
 		nextWait = rekeyTimeoutBackground
-		return nextWait, nil, err
+		return nextWait, nil, keybase1.RekeyEvent{Type: keybase1.RekeyEventType_NO_PROBLEMS}, err
 	}
 
 	var me *libkb.User
@@ -299,13 +320,13 @@ func (r *rekeyMaster) computeProblems() (nextWait time.Duration, problemsAndDevi
 	if err != nil {
 		nextWait = rekeyTimeoutLoadMeError
 		r.G().Log.Debug("| snoozing rekeyMaster for %ds on LoadMe error", nextWait)
-		return nextWait, nil, err
+		return nextWait, nil, keybase1.RekeyEvent{Type: keybase1.RekeyEventType_LOAD_ME_ERROR}, err
 	}
 
 	if r.currentDeviceSolvesProblemSet(me, problems) {
 		nextWait = rekeyTimeoutBackground
 		r.G().Log.Debug("| snoozing rekeyMaster since current device can rekey all")
-		return nextWait, nil, err
+		return nextWait, nil, keybase1.RekeyEvent{Type: keybase1.RekeyEventType_CURRENT_DEVICE_CAN_REKEY}, err
 	}
 
 	var tmp keybase1.ProblemSetDevices
@@ -313,11 +334,11 @@ func (r *rekeyMaster) computeProblems() (nextWait time.Duration, problemsAndDevi
 	if err != nil {
 		nextWait = rekeyTimeoutDeviceLoadError
 		r.G().Log.Debug("| hit error in loading devices")
-		return nextWait, nil, err
+		return nextWait, nil, keybase1.RekeyEvent{Type: keybase1.RekeyEventType_DEVICE_LOAD_ERROR}, err
 	}
 
 	nextWait = rekeyTimeoutActive
-	return nextWait, &tmp, err
+	return nextWait, &tmp, keybase1.RekeyEvent{Type: keybase1.RekeyEventType_HARASS}, err
 }
 
 // currentDeviceSolvesProblemSet returns true if the current device can fix all

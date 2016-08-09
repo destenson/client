@@ -1026,6 +1026,20 @@ export type PushReason =
   | 1 // RECONNECTED_1
   | 2 // NEW_DATA_2
 
+export type RekeyEvent = {
+  type: RekeyEventType;
+}
+
+export type RekeyEventType =
+    0 // NONE_0
+  | 1 // NOT_LOGGED_IN_1
+  | 2 // API_ERROR_2
+  | 3 // NO_PROBLEMS_3
+  | 4 // LOAD_ME_ERROR_4
+  | 5 // CURRENT_DEVICE_CAN_REKEY_5
+  | 6 // DEVICE_LOAD_ERROR_6
+  | 7 // HARASS_7
+
 export type RemoteProof = {
   proofType: ProofType;
   key: string;
@@ -3047,6 +3061,17 @@ export function rekeyUIRefreshRpc (request: $Exact<{
   callback?: (null | (err: ?any) => void)}>) {
   engine.rpc({...request, method: 'rekeyUI.refresh'})
 }
+export type rekeyUIRekeySendEventRpcParam = $Exact<{
+  event: RekeyEvent
+}>
+
+export function rekeyUIRekeySendEventRpc (request: $Exact<{
+  param: rekeyUIRekeySendEventRpcParam,
+  waitingHandler?: (waiting: boolean, method: string, sessionID: string) => void,
+  incomingCallMap?: incomingCallMapType,
+  callback?: (null | (err: ?any) => void)}>) {
+  engine.rpc({...request, method: 'rekeyUI.rekeySendEvent'})
+}
 export type revokeRevokeDeviceRpcParam = $Exact<{
   deviceID: DeviceID,
   force: boolean
@@ -3931,6 +3956,7 @@ export type rpc =
   | rekeyShowPendingRekeyStatusRpc
   | rekeyUIDelegateRekeyUIRpc
   | rekeyUIRefreshRpc
+  | rekeyUIRekeySendEventRpc
   | revokeRevokeDeviceRpc
   | revokeRevokeKeyRpc
   | revokeRevokeSigsRpc
@@ -5709,6 +5735,16 @@ export type incomingCallMapType = $Exact<{
     params: $Exact<{
       sessionID: int,
       problemSetDevices: ProblemSetDevices
+    }>,
+    response: {
+      error: (err: RPCError) => void,
+      result: () => void
+    }
+  ) => void,
+  'keybase.1.rekeyUI.rekeySendEvent'?: (
+    params: $Exact<{
+      sessionID: int,
+      event: RekeyEvent
     }>,
     response: {
       error: (err: RPCError) => void,
