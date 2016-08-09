@@ -23,6 +23,7 @@ type rekeyMaster struct {
 	snoozeUntil   time.Time
 	plannedWakeup time.Time
 	uiNeeded      bool
+	uiVisible     bool
 }
 
 type interruptArg struct {
@@ -184,6 +185,7 @@ func (r *rekeyMaster) runOnce(ri rekeyInterrupt) (ret time.Duration, err error) 
 
 	if ri == rekeyInterruptUIFinished {
 		ret = rekeyTimeoutUIFinished
+		r.uiVisible = false
 		r.snoozeUntil = r.G().Clock().Now().Add(ret)
 		r.G().Log.Debug("| UI said finished; hard-snoozing %ds", ret)
 		return ret, nil
@@ -211,8 +213,8 @@ func (r *rekeyMaster) runOnce(ri rekeyInterrupt) (ret time.Duration, err error) 
 	return ret, err
 }
 
-func (r *rekeyMaster) getUI(remake bool) (ret *RekeyUI, err error) {
-	ret, err = r.uiRouter.getOrReuseRekeyUI(r.ui, remake)
+func (r *rekeyMaster) getUI() (ret *RekeyUI, err error) {
+	ret, err = r.uiRouter.getOrReuseRekeyUI(r.ui, true)
 	r.ui = ret
 	return ret, err
 }
@@ -220,22 +222,29 @@ func (r *rekeyMaster) getUI(remake bool) (ret *RekeyUI, err error) {
 func (r *rekeyMaster) clearUI() (err error) {
 	defer r.G().Trace("rekeyMaster#clearUI", func() error { return err })()
 
+	if !r.uiVisible {
+		r.G().Log.Debug("| no need to clear the UI; UI wasn't visible")
+		return nil
+	}
+
 	var ui *RekeyUI
-	ui, err = r.getUI(false /* remake */)
+	ui, err = r.getUI()
 
 	if err != nil {
 		return err
 	}
+
 	if ui == nil {
+		r.uiVisible = false
 		r.G().Log.Debug("| UI wasn't active, so nothing to do")
 		return nil
 	}
 
 	err = ui.Refresh(context.Background(), keybase1.RefreshArg{})
 
-	// No longer any reason to hold onto this session/UI. The next
-	// time we go through, we'll just make a new one.
-	r.ui = nil
+	if err == nil {
+		r.uiVisible = false
+	}
 
 	return err
 }
@@ -244,7 +253,7 @@ func (r *rekeyMaster) spawnOrRefreshUI(problemSetDevices keybase1.ProblemSetDevi
 	defer r.G().Trace("rekeyMaster#spawnOrRefreshUI", func() error { return err })()
 
 	var ui *RekeyUI
-	ui, err = r.getUI(true /* remake */)
+	ui, err = r.getUI()
 	if err != nil {
 		return err
 	}
@@ -255,6 +264,7 @@ func (r *rekeyMaster) spawnOrRefreshUI(problemSetDevices keybase1.ProblemSetDevi
 		return nil
 	}
 	r.uiNeeded = false
+	r.uiVisible = true
 
 	err = ui.Refresh(context.Background(), keybase1.RefreshArg{ProblemSetDevices: problemSetDevices})
 	return err
@@ -265,7 +275,7 @@ func (r *rekeyMaster) spawnOrRefreshUI(problemSetDevices keybase1.ProblemSetDevi
 func (r *rekeyMaster) sendRekeyEvent(e keybase1.RekeyEvent) (err error) {
 	defer r.G().Trace(fmt.Sprintf("rekeyMaster#sendRekeyEvent(%v)", e), func() error { return err })()
 	var ui *RekeyUI
-	ui, err = r.getUI(false /* don't remake */)
+	ui, err = r.getUI()
 	if err != nil {
 		return err
 	}

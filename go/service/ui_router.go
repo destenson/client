@@ -113,7 +113,7 @@ func (u *UIRouter) GetIdentifyUI() (libkb.IdentifyUI, error) {
 }
 
 func (u *UIRouter) GetSecretUI(sessionID int) (ui libkb.SecretUI, err error) {
-	defer u.G().Trace("UIRouter.GetSecretUI", func() error { return err })()
+	defer u.G().Trace("UIRouter#GetSecretUI", func() error { return err })()
 	x, _ := u.getUI(libkb.SecretUIKind)
 	if x == nil {
 		u.G().Log.Debug("| getUI(libkb.SecretUIKind) returned nil")
@@ -133,10 +133,11 @@ func (u *UIRouter) GetSecretUI(sessionID int) (ui libkb.SecretUI, err error) {
 
 func (u *UIRouter) GetRekeyUI() (keybase1.RekeyUIInterface, int, error) {
 	var err error
-	defer u.G().Trace("UIRouter.GetRekeyUI", func() error { return err })()
+	defer u.G().Trace("UIRouter#GetRekeyUI", func() error { return err })()
 
 	x, cid := u.getUI(libkb.RekeyUIKind)
 	if x == nil {
+		u.G().Log.Debug("| getUI(libkb.RekeyUIKind) returned nil")
 		return nil, 0, nil
 	}
 	cli := rpc.NewClient(x, libkb.ErrorUnwrapper{})
