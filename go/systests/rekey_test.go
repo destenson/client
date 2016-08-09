@@ -150,6 +150,36 @@ func newTestRekeyUI() *testRekeyUI {
 	}
 }
 
+func (rkt *rekeyTester) loadEncryptionKIDs() (devices []keybase1.KID, backups []keybase1.KID) {
+	keyMap := make(map[keybase1.KID]keybase1.PublicKey)
+	keys, err := rkt.userClient.LoadMyPublicKeys(context.TODO(), 0)
+	if err != nil {
+		rkt.t.Fatalf("Failed to LoadMyPublicKeys: %s", err)
+	}
+	for _, key := range keys {
+		keyMap[key.KID] = key
+	}
+
+	for _, key := range keys {
+		if key.IsSibkey {
+			continue
+		}
+		parent, found := keyMap[keybase1.KID(key.ParentID)]
+		if !found {
+			continue
+		}
+
+		switch parent.DeviceType {
+		case libkb.DeviceTypePaper:
+			backups = append(backups, key.KID)
+		case libkb.DeviceTypeDesktop:
+			devices = append(devices, key.KID)
+		default:
+		}
+	}
+	return devices, backups
+}
+
 func (rkt *rekeyTester) signupUserWithOneDevice() {
 	userInfo := randomUser("rekey")
 	tctx := rkt.serviceWrapper.popClone()
@@ -165,26 +195,17 @@ func (rkt *rekeyTester) signupUserWithOneDevice() {
 		rkt.t.Fatal(err)
 	}
 	rkt.t.Logf("signed up %s", userInfo.username)
-	keys, err := rkt.userClient.LoadMyPublicKeys(context.TODO(), 0)
-	if err != nil {
-		rkt.t.Fatalf("Failed to LoadMyPublicKeys: %s", err)
-	}
 	var backupKey backupKey
 	backupKey.secret = signupUI.info.displayedPaperKey
-	for _, key := range keys {
-		switch key.DeviceType {
-		case libkb.DeviceTypePaper:
-			backupKey.publicKID = key.KID
-		case libkb.DeviceTypeDesktop:
-			rkt.deviceKey = key
-		}
+	devices, backups := rkt.loadEncryptionKIDs()
+	if len(devices) != 1 {
+		rkt.t.Fatalf("Expected 1 device back; got %d", len(devices))
 	}
-	if len(rkt.deviceKey.KID) == 0 {
-		rkt.t.Fatalf("Didn't get device key back for user")
+	if len(backups) != 1 {
+		rkt.t.Fatalf("Expected 1 backup back; got %d", len(backups))
 	}
-	if len(backupKey.publicKID) == 0 {
-		rkt.t.Fatalf("Didn't get backup key back for user")
-	}
+	rkt.deviceKey.KID = devices[0]
+	backupKey.publicKID = backups[0]
 	rkt.backupKeys = append(rkt.backupKeys, backupKey)
 }
 
@@ -307,7 +328,7 @@ func (rkt *rekeyTester) bumpTLF(kid keybase1.KID) {
 func (rkt *rekeyTester) assertRekeyWindowPushed() {
 	select {
 	case <-rkt.rekeyUI.refreshes:
-	case <-time.After(20 * time.Second):
+	case <-time.After(10 * time.Second):
 		rkt.t.Fatalf("no gregor came in after 20s; something is broken")
 	}
 }
@@ -404,28 +425,19 @@ func (rkt *rekeyTester) generateNewBackupKey() {
 	if err := paperGen.Run(); err != nil {
 		rkt.t.Fatal(err)
 	}
-	keys, err := rkt.userClient.LoadMyPublicKeys(context.TODO(), 0)
-	if err != nil {
-		rkt.t.Fatalf("Failed to LoadMyPublicKeys: %s", err)
-	}
+	_, backups := rkt.loadEncryptionKIDs()
 	var backupKey backupKey
 	backupKey.secret = loginUI.secret
-
-	var allBackupKIDs []keybase1.KID
-	for _, key := range keys {
-		switch key.DeviceType {
-		case libkb.DeviceTypePaper:
-			allBackupKIDs = append(allBackupKIDs, key.KID)
-		}
-	}
-
-	kid := rkt.findNewBackupKID(allBackupKIDs)
+	kid := rkt.findNewBackupKID(backups)
 	if kid.IsNil() {
 		rkt.t.Fatalf("didn't find a new backup key!")
 	}
-	backupKey.publicKID = kid
+	g.Log.Debug("New backup key is: %s", kid)
 
+	backupKey.publicKID = kid
 	rkt.backupKeys = append(rkt.backupKeys, backupKey)
+
+	rkt.bumpTLF(kid)
 }
 
 func TestRekey(t *testing.T) {
@@ -450,7 +462,7 @@ func TestRekey(t *testing.T) {
 
 	// 5. wait for an incoming gregor notification for the new TLF,
 	// since it's in a broken rekey state.
-	// rkt.assertRekeyWindowPushed()
+	rkt.assertRekeyWindowPushed()
 
 	// 6. Dismiss the window and assert it doesn't show up again for
 	// another 24 hours.
