@@ -98,6 +98,7 @@ type rekeyTester struct {
 	t              *testing.T
 	log            logger.Logger
 	serviceWrapper *serviceWrapper
+	allDevices     []*serviceWrapper
 	rekeyUI        *testRekeyUI
 	fakeClock      clockwork.FakeClock
 	rekeyClient    keybase1.RekeyClient
@@ -114,12 +115,17 @@ func newRekeyTester(t *testing.T) *rekeyTester {
 }
 
 func (rkt *rekeyTester) setup(nm string) {
+	rkt.fakeClock = clockwork.NewFakeClockAt(time.Now())
+	rkt.serviceWrapper = rkt.setupDevice(nm)
+	rkt.log = rkt.serviceWrapper.tctx.G.Log
+}
+
+func (rkt *rekeyTester) setupDevice(nm string) *serviceWrapper {
 	tctx := setupTest(rkt.t, nm)
-	fakeClock := clockwork.NewFakeClockAt(time.Now())
-	rkt.fakeClock = fakeClock
-	tctx.G.SetClock(fakeClock)
-	rkt.log = tctx.G.Log
-	rkt.serviceWrapper = &serviceWrapper{tctx: tctx}
+	tctx.G.SetClock(rkt.fakeClock)
+	ret := &serviceWrapper{tctx: tctx}
+	rkt.allDevices = append(rkt.allDevices, ret)
+	return ret
 }
 
 func (rkt *rekeyTester) startService() {
@@ -127,7 +133,9 @@ func (rkt *rekeyTester) startService() {
 }
 
 func (rkt *rekeyTester) cleanup() {
-	rkt.serviceWrapper.tctx.Cleanup()
+	for _, od := range rkt.allDevices {
+		od.tctx.Cleanup()
+	}
 }
 
 type testRekeyUI struct {
@@ -405,34 +413,34 @@ func (rkt *rekeyTester) snoozeRekeyWindow() {
 	}
 }
 
-type testLoginUI struct {
+type rekeyBackupKeyUI struct {
 	baseNullUI
 	secret string
 }
 
-func (u *testLoginUI) DisplayPaperKeyPhrase(_ context.Context, arg keybase1.DisplayPaperKeyPhraseArg) error {
+func (u *rekeyBackupKeyUI) DisplayPaperKeyPhrase(_ context.Context, arg keybase1.DisplayPaperKeyPhraseArg) error {
 	u.secret = arg.Phrase
 	return nil
 }
-func (u *testLoginUI) DisplayPrimaryPaperKey(context.Context, keybase1.DisplayPrimaryPaperKeyArg) error {
+func (u *rekeyBackupKeyUI) DisplayPrimaryPaperKey(context.Context, keybase1.DisplayPrimaryPaperKeyArg) error {
 	return nil
 }
-func (u *testLoginUI) PromptRevokePaperKeys(context.Context, keybase1.PromptRevokePaperKeysArg) (bool, error) {
+func (u *rekeyBackupKeyUI) PromptRevokePaperKeys(context.Context, keybase1.PromptRevokePaperKeysArg) (bool, error) {
 	return false, nil
 }
-func (u *testLoginUI) GetEmailOrUsername(context.Context, int) (string, error) {
+func (u *rekeyBackupKeyUI) GetEmailOrUsername(context.Context, int) (string, error) {
 	return "", nil
 }
 
-func (u *testLoginUI) GetLoginUI() libkb.LoginUI {
+func (u *rekeyBackupKeyUI) GetLoginUI() libkb.LoginUI {
 	return u
 }
 
-func (u *testLoginUI) GetSecretUI() libkb.SecretUI {
+func (u *rekeyBackupKeyUI) GetSecretUI() libkb.SecretUI {
 	return u
 }
 
-func (u *testLoginUI) GetPassphrase(p keybase1.GUIEntryArg, terminal *keybase1.SecretEntryArg) (res keybase1.GetPassphraseRes, err error) {
+func (u *rekeyBackupKeyUI) GetPassphrase(p keybase1.GUIEntryArg, terminal *keybase1.SecretEntryArg) (res keybase1.GetPassphraseRes, err error) {
 	return res, err
 }
 
@@ -455,15 +463,15 @@ func (rkt *rekeyTester) findNewBackupKID(kids []keybase1.KID) (ret keybase1.KID)
 func (rkt *rekeyTester) generateNewBackupKey() {
 	tctx := rkt.serviceWrapper.popClone()
 	g := tctx.G
-	loginUI := testLoginUI{}
-	g.SetUI(&loginUI)
+	ui := rekeyBackupKeyUI{}
+	g.SetUI(&ui)
 	paperGen := client.NewCmdPaperKeyRunner(g)
 	if err := paperGen.Run(); err != nil {
 		rkt.t.Fatal(err)
 	}
 	_, backups := rkt.loadEncryptionKIDs()
 	var backupKey backupKey
-	backupKey.secret = loginUI.secret
+	backupKey.secret = ui.secret
 	kid := rkt.findNewBackupKID(backups)
 	if kid.IsNil() {
 		rkt.t.Fatalf("didn't find a new backup key!")
@@ -486,6 +494,14 @@ func (rkt *rekeyTester) expectAlreadyKeyedNoop() {
 	case <-time.After(10 * time.Second):
 		rkt.t.Fatal("Didn't get an event before 10s timeout")
 	}
+	rkt.confirmNoRekeyUIActivity(28, false)
+}
+
+type rekeyProvisionUI struct {
+	baseNullUI
+}
+
+func (rkt *rekeyTester) provisionNewDevice() {
 }
 
 func TestRekey(t *testing.T) {
@@ -512,7 +528,9 @@ func TestRekey(t *testing.T) {
 	// because our device is already properly keyed. And then expect
 	// no rekey activity thereafter
 	rkt.expectAlreadyKeyedNoop()
-	rkt.confirmNoRekeyUIActivity(28, false)
+
+	// 6. Provision a new device.
+	rkt.provisionNewDevice()
 
 	// 5. wait for an incoming gregor notification for the new TLF,
 	// since it's in a broken rekey state.
