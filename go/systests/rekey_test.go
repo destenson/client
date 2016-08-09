@@ -340,6 +340,27 @@ func (rkt *rekeyTester) bumpTLF(kid keybase1.KID) {
 	}
 }
 
+func (rkt *rekeyTester) kickRekeyd() {
+
+	// Use the global context from the service for making API calls
+	// to the API server.
+	g := rkt.serviceWrapper.tctx.G
+
+	apiArg := libkb.APIArg{
+		Endpoint: "test/accelerate_rekeyd",
+		Args: libkb.HTTPArgs{
+			"timeout": libkb.I{Val: 2000},
+		},
+		NeedSession:  true,
+		Contextified: libkb.NewContextified(g),
+	}
+
+	_, err := g.API.Post(apiArg)
+	if err != nil {
+		rkt.t.Errorf("Failed to accelerate rekeyd: %s", err)
+	}
+}
+
 func (rkt *rekeyTester) assertRekeyWindowPushed() {
 	select {
 	case <-rkt.rekeyUI.refreshes:
@@ -453,6 +474,7 @@ func (rkt *rekeyTester) generateNewBackupKey() {
 	rkt.backupKeys = append(rkt.backupKeys, backupKey)
 
 	rkt.bumpTLF(kid)
+	rkt.kickRekeyd()
 }
 
 func (rkt *rekeyTester) expectAlreadyKeyedNoop() {
