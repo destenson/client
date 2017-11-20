@@ -235,7 +235,7 @@ function* _appendAttachmentPlaceholder(
     ...Constants.getAttachmentInfo(preview),
     title,
     uploadPath,
-    ordinal: Constants.nextFractionalOrdinal(lastOrd),
+    ordinal: Constants.nextFractionalOrdinal(lastOrd), // Add an ordinal here to keep in correct order
   }
 
   const selectedConversation = yield Saga.select(Constants.getSelectedConversation)

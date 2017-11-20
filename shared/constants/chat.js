@@ -1091,6 +1091,7 @@ function lastOrdinal(state: TypedState, conversationIDKey: ConversationIDKey): n
 }
 
 function nextFractionalOrdinal(ord: number): number {
+  // Mimic what the service does with outbox items
   return ord + 0.001
 }
 
