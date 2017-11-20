@@ -752,6 +752,8 @@ function _getMessageOrdinal(m: Constants.ServerMessage): number {
   switch (m.type) {
     case 'Attachment':
     case 'Text':
+      // These pending messages do not have message IDs, instead getting the special ordinal
+      // values that will keep them in the correct order in the message list.
       if (m.messageState === 'pending' || m.messageState === 'failed') {
         return m.ordinal
       }
@@ -767,6 +769,8 @@ function addMessagesToConversation(
   messages: Array<Constants.ServerMessage>
 ): Constants.ConversationMessages {
   const currentMessages = Constants.getConversationMessages(state, conversationIDKey)
+  // Find all those messages that will grow the current set of messages in either direction. This process
+  // both orders the messages correctly, as well as de-dupes.
   const lowMessages = messages.filter((m: Constants.ServerMessage) => {
     return _getMessageOrdinal(m) < currentMessages.low
   })
@@ -775,6 +779,8 @@ function addMessagesToConversation(
   })
   const incrMessages = lowMessages.concat(highMessages)
 
+  // Figure out the new bounds for the set of messages. Note the special case for the first setting of low,
+  // using the special value of -1, which cannot be set by a normal call
   const newLow = incrMessages.length > 0 &&
     (currentMessages.low < 0 || _getMessageOrdinal(incrMessages[0]) < currentMessages.low)
     ? _getMessageOrdinal(incrMessages[0])
@@ -783,6 +789,8 @@ function addMessagesToConversation(
     _getMessageOrdinal(incrMessages[incrMessages.length - 1]) > currentMessages.high
     ? _getMessageOrdinal(incrMessages[incrMessages.length - 1])
     : currentMessages.high
+
+  // Join the new lists together in the correct order and return the properly formatted result
   const newMessages = lowMessages
     .map(m => m.key)
     .concat(currentMessages.messages.toArray())
