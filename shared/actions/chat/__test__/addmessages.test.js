@@ -43,8 +43,11 @@ describe('addMessagesToConversation', () => {
   it('basic', () => {
     const state = makeState()
     const convIDKey = 'mike'
-    const currentMessages = Constants.getConversationMessages(state, convIDKey)
-    const messages = [makeMsg('Text', 'sent', 10), makeMsg('Text', 'sent', 11), makeMsg('Text', 'sent', 12)]
+    const messages = [
+      makeMsg('Text', 'sent', 10),
+      makeMsg('Text', 'pending', 11.1),
+      makeMsg('Text', 'sent', 12),
+    ]
     let newConvMsgs = addMessagesToConversation(state, convIDKey, messages)
     expect(newConvMsgs.high).toBe(12)
     expect(newConvMsgs.low).toBe(10)
@@ -53,19 +56,25 @@ describe('addMessagesToConversation', () => {
     const appendMessages = [
       makeMsg('Text', 'sent', 8),
       makeMsg('Text', 'sent', 9),
-      makeMsg('Text', 'sent', 13),
+      makeMsg('Text', 'sent', 10),
+      makeMsg('Text', 'pending', 11.1),
+      makeMsg('Text', 'sent', 12),
+      makeMsg('Text', 'pending', 13.001),
     ]
     newConvMsgs = addMessagesToConversation(state, convIDKey, appendMessages)
-    expect(newConvMsgs.high).toBe(13)
+    expect(newConvMsgs.high).toBe(13.001)
     expect(newConvMsgs.low).toBe(8)
     expect(newConvMsgs.messages.get(0)).toBe(8)
-    expect(newConvMsgs.messages.get(-1)).toBe(13)
+    expect(newConvMsgs.messages.get(-1)).toBe(13.001)
+    expect(newConvMsgs.messages.size).toBe(6)
   })
   it('edges', () => {
     const state = makeState()
     const convIDKey = 'mike'
-    const currentMessages = Constants.getConversationMessages(state, convIDKey)
-    const messages = [makeMsg('Text', 'sent', 10), makeMsg('Text', 'sent', 11), makeMsg('Text', 'sent', 12)]
+    const messages = []
     let newConvMsgs = addMessagesToConversation(state, convIDKey, messages)
+    expect(newConvMsgs.high).toBe(-1)
+    expect(newConvMsgs.low).toBe(-1)
+    expect(newConvMsgs.messages.size).toBe(0)
   })
 })
