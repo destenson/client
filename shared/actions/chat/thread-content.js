@@ -389,7 +389,6 @@ function _unboxedToMessage(
       // $FlowIssue
       ? _decodeFailureDescription(payload.state.error.typ)
       : null
-    // $FlowIssue
     const messageText = message.outbox.body
     const outboxIDKey = payload.outboxID && Constants.outboxIDToKey(payload.outboxID)
 
