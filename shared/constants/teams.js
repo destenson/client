@@ -213,9 +213,11 @@ export type UpdateTopic = NoErrorTypedAction<
   {conversationIDKey: ChatConstants.ConversationIDKey, newTopic: string}
 >
 
-export type DeleteChannel = NoErrorTypedAction<
-  'teams:deleteChannel',
-  {conversationIDKey: ChatConstants.ConversationIDKey}
+export type DeleteChannelConfirmed = NoErrorTypedAction<
+  'teams:deleteChannelConfirmed',
+  {
+    conversationIDKey: ChatConstants.ConversationIDKey,
+  }
 >
 
 export type SaveChannelMembership = NoErrorTypedAction<
