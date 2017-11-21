@@ -720,6 +720,28 @@ function* _updateThread({
       yourDeviceName,
       conversationIDKey
     )
+
+    // If we find a sent message in the list of messages are adding to the thread, then double check
+    // that we do not have any pending messages with the same outbox ID also in the list. If we do, then
+    // that pending message was sent and we just missed word about it, so let's just remove it here.
+    const messageFromYou =
+      message.deviceName === yourDeviceName && message.author && yourName === message.author
+    if (
+      (message.type === 'Text' || message.type === 'Attachment') &&
+      messageFromYou &&
+      message.outboxID &&
+      message.messageState !== 'pending'
+    ) {
+      const outboxID: Constants.OutboxIDKey = message.outboxID
+      const state = yield Saga.select()
+      const pendingMessage = Shared.messageOutboxIDSelector(state, conversationIDKey, outboxID)
+      if (pendingMessage) {
+        // Delete the pre-existing pending version of this message, since we're
+        // about to add a newly received version of the same message.
+        yield Saga.put(ChatGen.createRemoveOutboxMessage({conversationIDKey, outboxID}))
+      }
+    }
+
     if (message.type !== 'Unhandled') {
       newMessages.push(message)
     }
