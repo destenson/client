@@ -798,11 +798,6 @@ function messageKeyKindIsMessageID(key: MessageKey): boolean {
 }
 
 function messageKeyKind(key: MessageKey): MessageKeyKind {
-  try {
-    key.split(':')
-  } catch (e) {
-    console.log(JSON.stringify(key))
-  }
   const [, kind] = key.split(':')
   switch (kind) {
     case 'joinedleft':
