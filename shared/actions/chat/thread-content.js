@@ -721,7 +721,7 @@ function* _updateThread({
       conversationIDKey
     )
 
-    // If we find a sent message in the list of messages are adding to the thread, then double check
+    // If we find a sent message in the list of messages we are adding to the thread, then double check
     // that we do not have any pending messages with the same outbox ID also in the list. If we do, then
     // that pending message was sent and we just missed word about it, so let's just remove it here.
     const messageFromYou =
